@@ -16,7 +16,7 @@ System behavior:
 
 
 ## 2. Fall Detection
-Device User:
+User:
 
 I want the device to automatically detect a fall,
 so that help can be requested even if I cannot press the button
