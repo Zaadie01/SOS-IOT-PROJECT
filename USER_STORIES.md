@@ -40,10 +40,6 @@ Dashboard shows:
   •	last button press
 	
   •	last device activity
-	
-  •	temperature
-	
-  •	connection status
 
 
 ## 4. Cloud Data Storage
