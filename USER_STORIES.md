@@ -15,20 +15,9 @@ System behavior:
   •	Caregiver is notified
 
 
-## 2. Fall Detection
-User:
-
-I want the device to automatically detect a fall,
-so that help can be requested even if I cannot press the button
-
-System behavior:
-	
-  •	Accelerometer detects sudden movement
-	
-  •	Gateway sends alert
 
 
-## 3. Device Monitoring
+## 2. Device Monitoring
 
 Caretaker:
 
@@ -42,14 +31,14 @@ Dashboard shows:
   •	last device activity
 
 
-## 4. Cloud Data Storage
+## 3. Cloud Data Storage
 
 Admin:
 
 I want the cloud application to store data from multiple gateways,
 So the system can scale to many devices
 
-## 5. Gateway Dashboard
+## 4. Gateway Dashboard
 System Operator:
 
 I want a dashboard showing the gateway status and the queued data, so that I can monitor system health
