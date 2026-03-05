@@ -30,25 +30,3 @@ Dashboard shows:
 	
   •	last device activity
 
-
-## 3. Cloud Data Storage
-
-Admin:
-
-I want the cloud application to store data from multiple gateways,
-So the system can scale to many devices
-
-## 4. Gateway Dashboard
-System Operator:
-
-I want a dashboard showing the gateway status and the queued data, so that I can monitor system health
-
-Dashboard shows:
-	
-  •	connection to cloud
-	
-  •	unsent records
-	
-  •	latest temperature
-	
-  •	button history
