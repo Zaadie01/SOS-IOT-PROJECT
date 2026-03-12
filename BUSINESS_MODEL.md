@@ -26,13 +26,12 @@ The backend system that receives, processes, and stores data from the gateways.
 A wearable device built using the HARDWARIO Core Module.  
 It includes:
 - SOS emergency button
-- 3-axis accelerometer
 - temperature sensor
 
 The device collects data and transmits it to the gateway.
 
 ### Gateway Application
-A gateway implemented using **Node-RED** running on a Raspberry Pi or laptop.  
+A gateway implemented using **Node-RED**  
 Its responsibilities include:
 - receiving data from IoT nodes
 - performing data downsampling
