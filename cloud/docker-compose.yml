@@ -1,0 +1,16 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sos-backend
+    ports:
+      - "3001:3001"
+    volumes:
+      - backend-data:/app
+    environment:
+      - PORT=3001
+    restart: unless-stopped
+
+volumes:
+  backend-data:

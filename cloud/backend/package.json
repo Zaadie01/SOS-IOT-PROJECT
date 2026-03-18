@@ -8,19 +8,24 @@
     "dev": "nodemon server.js"
   },
   "dependencies": {
-    "express": "^4.18.2",
-    "cors": "^2.8.5",
-    "helmet": "^7.0.0",
-    "morgan": "^1.10.0",
-    "sqlite3": "^5.1.6",
     "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "helmet": "^7.0.0",
     "jsonwebtoken": "^9.0.2",
-    "dotenv": "^16.3.1"
+    "morgan": "^1.10.0",
+    "sqlite3": "^5.1.7"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
   },
-  "keywords": ["iot", "sos", "gateway", "express"],
+  "keywords": [
+    "iot",
+    "sos",
+    "gateway",
+    "express"
+  ],
   "author": "Team 3",
   "license": "ISC"
 }

@@ -1,0 +1,16 @@
+{
+  "name": "sos-gateway",
+  "version": "1.0.0",
+  "description": "Serial gateway between HARDWARIO device and SOS cloud backend",
+  "main": "gateway.js",
+  "scripts": {
+    "start": "node gateway.js"
+  },
+  "dependencies": {
+    "@serialport/parser-readline": "^12.0.0",
+    "axios": "^1.6.0",
+    "serialport": "^12.0.0"
+  },
+  "author": "Team 3",
+  "license": "ISC"
+}
