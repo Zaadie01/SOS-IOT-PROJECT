@@ -8,10 +8,6 @@ The user can press the emergency button in dangerous situations to send an alert
 A person responsible for monitoring the safety of the device user.  
 They receive alerts and can monitor the device through the application dashboard.
 
-### System Administrator
-Responsible for managing and maintaining the system.  
-They monitor gateway status, system health, and device connectivity.
-
 ### Gateway Device
 A technical actor responsible for receiving data from IoT nodes and forwarding it to the cloud application.
 
