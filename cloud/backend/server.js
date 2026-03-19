@@ -1,12 +1,15 @@
+const http = require('http');
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
+const { WebSocketServer } = require('ws');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const GATEWAY_TOKEN = process.env.GATEWAY_TOKEN;
 
 // Middleware
 app.use(helmet());
@@ -15,7 +18,7 @@ app.use(express.json());
 app.use(morgan('combined'));
 
 // Database setup
-const dbPath = path.join(__dirname, 'gateway_data.db');
+const dbPath = path.join(__dirname, 'data', 'gateway_data.db');
 const db = new sqlite3.Database(dbPath, (err) => {
     if (err) {
         console.error('Error opening database:', err);
@@ -25,133 +28,99 @@ const db = new sqlite3.Database(dbPath, (err) => {
     }
 });
 
-// Initialize database tables
 function initDatabase() {
     db.run(`
-        CREATE TABLE IF NOT EXISTS sensor_data (
+        CREATE TABLE IF NOT EXISTS sos_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp INTEGER NOT NULL,
             device_id TEXT NOT NULL,
-            temperature REAL,
             button_pressed INTEGER,
-            accel_x REAL,
-            accel_y REAL,
-            accel_z REAL,
-            sos_alert INTEGER,
             gateway_id TEXT,
             synced_at INTEGER
         )
     `);
-    
-    db.run(`
-        CREATE TABLE IF NOT EXISTS gateways (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            gateway_id TEXT UNIQUE NOT NULL,
-            name TEXT,
-            location TEXT,
-            last_seen INTEGER,
-            auth_token TEXT,
-            created_at INTEGER DEFAULT (strftime('%s', 'now'))
-        )
-    `);
+
+}
+
+// WebSocket server
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server, path: '/ws' });
+
+wss.on('connection', (ws) => {
+    console.log('[WS] Client connected, total:', wss.clients.size);
+    ws.on('close', () => console.log('[WS] Client disconnected, total:', wss.clients.size));
+});
+
+function broadcast(data) {
+    const msg = JSON.stringify(data);
+    wss.clients.forEach(client => {
+        if (client.readyState === 1) client.send(msg);
+    });
 }
 
 // Routes
 
 // Health check
-app.get('/', (req, res) => {
-    res.json({ 
-        status: 'OK', 
+app.get('/', (_req, res) => {
+    res.json({
+        status: 'OK',
         message: 'SOS Gateway Backend API',
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        ws_clients: wss.clients.size,
     });
 });
 
-// Receive data from Gateway
+// Receive SOS event from Gateway
 app.post('/api/gateway/data', (req, res) => {
-    const { timestamp, device_id, temperature, button_pressed, accel_x, accel_y, accel_z, sos_alert, gateway_id } = req.body;
-    
+    if (GATEWAY_TOKEN && req.headers['x-gateway-token'] !== GATEWAY_TOKEN) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const { timestamp, device_id, button_pressed, gateway_id, sos_alert } = req.body;
+
+    if (!sos_alert) {
+        return res.status(200).json({ success: true, message: 'Non-SOS data ignored' });
+    }
+
     const sql = `
-        INSERT INTO sensor_data (timestamp, device_id, temperature, button_pressed, accel_x, accel_y, accel_z, sos_alert, gateway_id, synced_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO sos_events (timestamp, device_id, button_pressed, gateway_id, synced_at)
+        VALUES (?, ?, ?, ?, ?)
     `;
-    
-    db.run(sql, [timestamp, device_id, temperature, button_pressed ? 1 : 0, accel_x, accel_y, accel_z, sos_alert ? 1 : 0, gateway_id, Date.now()], function(err) {
+
+    db.run(sql, [timestamp, device_id, button_pressed, gateway_id, Date.now()], function(err) {
         if (err) {
             console.error('Database error:', err);
             return res.status(500).json({ error: 'Failed to store data' });
         }
-        
-        // If SOS alert, log it prominently
-        if (sos_alert) {
-            console.log('🚨 SOS ALERT received from device:', device_id);
-        }
-        
-        res.status(201).json({ 
-            success: true, 
-            id: this.lastID,
-            message: sos_alert ? 'SOS alert received' : 'Data stored'
-        });
+
+        const event = { id: this.lastID, timestamp, device_id, button_pressed, gateway_id };
+
+        console.log('🚨 SOS ALERT from device:', device_id, '— clicks:', button_pressed);
+        broadcast({ type: 'sos', event });
+
+        res.status(201).json({ success: true, id: this.lastID });
     });
 });
 
-// Get all data (for dashboard)
-app.get('/api/data', (req, res) => {
-    const sql = `SELECT * FROM sensor_data ORDER BY timestamp DESC LIMIT 100`;
-    db.all(sql, [], (err, rows) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
-        }
-        res.json({ data: rows });
-    });
-});
-
-// Get SOS alerts only
+// Get SOS history
 app.get('/api/alerts/sos', (req, res) => {
-    const sql = `SELECT * FROM sensor_data WHERE sos_alert = 1 ORDER BY timestamp DESC`;
-    db.all(sql, [], (err, rows) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
-        }
+    db.all(`SELECT * FROM sos_events ORDER BY timestamp DESC`, [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
         res.json({ alerts: rows });
     });
 });
 
-// Gateway registration
-app.post('/api/gateways/register', (req, res) => {
-    const { gateway_id, name, location } = req.body;
-    const token = require('crypto').randomBytes(32).toString('hex');
-    
-    const sql = `INSERT INTO gateways (gateway_id, name, location, auth_token) VALUES (?, ?, ?, ?)`;
-    
-    db.run(sql, [gateway_id, name, location, token], function(err) {
-        if (err) {
-            if (err.message.includes('UNIQUE constraint failed')) {
-                return res.status(409).json({ error: 'Gateway already registered' });
-            }
-            return res.status(500).json({ error: err.message });
-        }
-        res.status(201).json({ success: true, gateway_id, token });
-    });
-});
-
-// Start server
-app.listen(PORT, () => {
+// Start
+server.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
-    console.log(`📊 API endpoints:`);
-    console.log(`   GET  /                    - Health check`);
-    console.log(`   POST /api/gateway/data    - Receive sensor data`);
-    console.log(`   GET  /api/data            - Get all data`);
-    console.log(`   GET  /api/alerts/sos      - Get SOS alerts`);
-    console.log(`   POST /api/gateways/register - Register gateway`);
+    console.log(`🔌 WebSocket on ws://localhost:${PORT}/ws`);
 });
 
 // Graceful shutdown
 process.on('SIGINT', () => {
+    wss.close();
     db.close((err) => {
-        if (err) {
-            console.error(err.message);
-        }
+        if (err) console.error(err.message);
         console.log('Database connection closed.');
         process.exit(0);
     });

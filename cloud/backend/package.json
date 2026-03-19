@@ -15,7 +15,8 @@
     "helmet": "^7.0.0",
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
-    "sqlite3": "^5.1.7"
+    "sqlite3": "^5.1.7",
+    "ws": "^8.16.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"

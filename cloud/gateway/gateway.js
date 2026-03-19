@@ -1,4 +1,5 @@
 // gateway.js - Serial port gateway between HARDWARIO device and cloud backend
+require('dotenv').config();
 
 const { SerialPort } = require('serialport');
 const { ReadlineParser } = require('@serialport/parser-readline');
@@ -11,6 +12,7 @@ const CONFIG = {
     cloudUrl: process.env.CLOUD_URL || 'http://localhost:3001',
     gatewayId: process.env.GATEWAY_ID || 'gateway-001',
     deviceId: process.env.DEVICE_ID || 'hardwario-001',
+    gatewayToken: process.env.GATEWAY_TOKEN || '',
     retryAttempts: 3,
     retryDelay: 2000,
 };
@@ -28,7 +30,10 @@ const parser = port.pipe(new ReadlineParser({ delimiter: '\n' }));
 async function sendToCloud(payload, attempt = 1) {
     try {
         const response = await axios.post(`${CONFIG.cloudUrl}/api/gateway/data`, payload, {
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'x-gateway-token': CONFIG.gatewayToken,
+            },
             timeout: 5000,
         });
 
@@ -68,22 +73,6 @@ function handleSerialData(line) {
             gateway_id: CONFIG.gatewayId,
             sos_alert: 1,
             button_pressed: count,
-        };
-
-        sendToCloud(payload);
-    }
-    // Parse temperature: TEMP:23.45
-    else if (clean.includes('TEMP:')) {
-        const temp = parseFloat(clean.split(':')[1]);
-        console.log(`[TEMP] ${temp}C`);
-
-        const payload = {
-            timestamp: Date.now(),
-            device_id: CONFIG.deviceId,
-            gateway_id: CONFIG.gatewayId,
-            temperature: temp,
-            sos_alert: 0,
-            button_pressed: 0,
         };
 
         sendToCloud(payload);

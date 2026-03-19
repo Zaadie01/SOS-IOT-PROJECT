@@ -1,16 +1,38 @@
 services:
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+      - frontend
+    restart: unless-stopped
+
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: sos-backend
-    ports:
-      - "3001:3001"
-    volumes:
-      - backend-data:/app
     environment:
       - PORT=3001
+      - GATEWAY_TOKEN=${GATEWAY_TOKEN}
+    volumes:
+      - sqlite-data:/app/data
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: sos-frontend
     restart: unless-stopped
 
 volumes:
-  backend-data:
+  caddy_data:
+  caddy_config:
+  sqlite-data:
