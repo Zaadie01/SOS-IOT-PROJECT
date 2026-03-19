@@ -39,14 +39,14 @@ Its responsibilities include:
 - forwarding data to the cloud application
 
 ### Cloud Application
-A cloud-based backend implemented using **Express.js**.  
+A cloud-based backend.  
 It handles:
 - receiving data from gateways
 - storing and processing data
 - managing multiple gateways
 
 ### Web Dashboard
-A web interface built with **React.js** that allows users to:
+A web interface that allows users to:
 - monitor device status
 - view historical data
 - observe system alerts
@@ -58,10 +58,6 @@ A web interface built with **React.js** that allows users to:
 ### Emergency SOS Alert
 The device user presses the SOS button.  
 The IoT node sends the alert to the gateway, which forwards it to the cloud application where it is stored and processed.
-
-### Automatic Fall Detection
-The accelerometer detects sudden movement indicating a potential fall.  
-The system automatically sends an alert to the cloud application.
 
 ### Environmental Monitoring
 The device periodically measures temperature and sends the data to the gateway for processing and storage.
