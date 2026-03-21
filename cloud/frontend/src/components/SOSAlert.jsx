@@ -1,3 +1,6 @@
+// SOSAlert.jsx
+const RECENT_MS = 5 * 60 * 1000;
+
 export default function SOSAlert({ alerts }) {
     if (!alerts || alerts.length === 0) {
         return (
@@ -8,9 +11,14 @@ export default function SOSAlert({ alerts }) {
         );
     }
 
+    const recentAlerts = alerts.filter(a => Date.now() - a.timestamp < RECENT_MS);
+
     return (
-        <section className="sos-section has-alerts">
-            <h2>🚨 SOS ALERTS — {alerts.length} total</h2>
+        <section className={`sos-section ${recentAlerts.length > 0 ? 'has-alerts' : 'no-alerts'}`}>
+            <h2>
+                {recentAlerts.length > 0 ? '🚨 SOS ALERTS' : 'SOS Alerts'}
+                {' — '}{alerts.length} total{recentAlerts.length > 0 ? `, ${recentAlerts.length} recent` : ''}
+            </h2>
             <div className="alerts-list">
                 {alerts.slice(0, 5).map(alert => (
                     <div key={alert.id} className="alert-item">

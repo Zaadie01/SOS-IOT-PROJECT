@@ -1,5 +1,4 @@
 export default function Dashboard({ alerts }) {
-    const totalClicks = alerts.reduce((sum, a) => sum + (a.button_pressed || 0), 0);
     const uniqueDevices = new Set(alerts.map(a => a.device_id)).size;
 
     return (
@@ -10,10 +9,6 @@ export default function Dashboard({ alerts }) {
                 <div className="stat-card alert-stat">
                     <div className="stat-value">{alerts.length}</div>
                     <div className="stat-label">Total SOS Events</div>
-                </div>
-                <div className="stat-card">
-                    <div className="stat-value">{totalClicks}</div>
-                    <div className="stat-label">Total Button Clicks</div>
                 </div>
                 <div className="stat-card">
                     <div className="stat-value">{uniqueDevices}</div>

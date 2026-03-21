@@ -14,6 +14,7 @@ services:
       - .env
     environment:
       - DB_PATH=/data/gateway.db
+      # REGISTRATION_SECRET must be in .env and match the cloud's REGISTRATION_SECRET
     volumes:
       - gateway-sqlite:/data
     restart: unless-stopped

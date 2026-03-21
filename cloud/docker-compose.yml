@@ -18,9 +18,10 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: sos-backend
+    env_file:
+      - ./backend/.env
     environment:
       - PORT=3001
-      - GATEWAY_TOKEN=${GATEWAY_TOKEN}
     volumes:
       - sqlite-data:/app/data
     restart: unless-stopped

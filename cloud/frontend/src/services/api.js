@@ -1,3 +1,4 @@
+// api.js
 const BASE_URL = '/api';
 
 export async function fetchAlerts() {
@@ -5,4 +6,11 @@ export async function fetchAlerts() {
     if (!res.ok) throw new Error('Failed to fetch alerts');
     const json = await res.json();
     return json.alerts;
+}
+
+export async function fetchGateways() {
+    const res = await fetch(`${BASE_URL}/gateways`);
+    if (!res.ok) throw new Error('Failed to fetch gateways');
+    const json = await res.json();
+    return json.gateways;
 }

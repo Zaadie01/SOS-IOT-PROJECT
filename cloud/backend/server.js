@@ -1,4 +1,6 @@
+// server.js
 const http = require('http');
+const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -9,7 +11,7 @@ const { WebSocketServer } = require('ws');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const GATEWAY_TOKEN = process.env.GATEWAY_TOKEN;
+const REGISTRATION_SECRET = process.env.REGISTRATION_SECRET;
 
 // Middleware
 app.use(helmet());
@@ -29,17 +31,28 @@ const db = new sqlite3.Database(dbPath, (err) => {
 });
 
 function initDatabase() {
+    // Registered gateways — each gets its own unique token after registration
     db.run(`
-        CREATE TABLE IF NOT EXISTS sos_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp INTEGER NOT NULL,
-            device_id TEXT NOT NULL,
-            button_pressed INTEGER,
-            gateway_id TEXT,
-            synced_at INTEGER
+        CREATE TABLE IF NOT EXISTS gateways (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            gateway_id    TEXT UNIQUE NOT NULL,
+            device_id     TEXT,
+            token         TEXT UNIQUE NOT NULL,
+            registered_at INTEGER NOT NULL,
+            last_seen_at  INTEGER
         )
     `);
 
+    db.run(`
+        CREATE TABLE IF NOT EXISTS sos_events (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp      INTEGER NOT NULL,
+            device_id      TEXT NOT NULL,
+            button_pressed INTEGER,
+            gateway_id     TEXT,
+            synced_at      INTEGER
+        )
+    `);
 }
 
 // WebSocket server
@@ -58,7 +71,17 @@ function broadcast(data) {
     });
 }
 
+// ---------------------------------------------------------------------------
+// Helper — validate gateway token against DB, call cb(err, gateway)
+// ---------------------------------------------------------------------------
+function validateToken(token, cb) {
+    if (!token) return cb(null, null);
+    db.get('SELECT * FROM gateways WHERE token = ?', [token], cb);
+}
+
+// ---------------------------------------------------------------------------
 // Routes
+// ---------------------------------------------------------------------------
 
 // Health check
 app.get('/', (_req, res) => {
@@ -70,35 +93,81 @@ app.get('/', (_req, res) => {
     });
 });
 
+// Register a new gateway and receive a unique token
+// Body: { gateway_id, device_id, secret }
+app.post('/api/gateway/register', (req, res) => {
+    if (!REGISTRATION_SECRET) {
+        return res.status(503).json({ error: 'Registration not configured on server' });
+    }
+
+    const { gateway_id, device_id, secret } = req.body;
+
+    if (!gateway_id || !secret) {
+        return res.status(400).json({ error: 'gateway_id and secret are required' });
+    }
+
+    if (secret !== REGISTRATION_SECRET) {
+        console.warn(`[REGISTER] Bad secret from gateway_id=${gateway_id}`);
+        return res.status(401).json({ error: 'Invalid registration secret' });
+    }
+
+    const token = crypto.randomBytes(32).toString('hex');
+
+    db.run(
+        `INSERT OR REPLACE INTO gateways (gateway_id, device_id, token, registered_at)
+         VALUES (?, ?, ?, ?)`,
+        [gateway_id, device_id || null, token, Date.now()],
+        function (err) {
+            if (err) {
+                console.error('[REGISTER] DB error:', err);
+                return res.status(500).json({ error: 'Failed to register gateway' });
+            }
+            console.log(`[REGISTER] Gateway registered: id=${gateway_id} device=${device_id}`);
+            res.status(201).json({ token });
+        }
+    );
+});
+
 // Receive SOS event from Gateway
 app.post('/api/gateway/data', (req, res) => {
-    if (GATEWAY_TOKEN && req.headers['x-gateway-token'] !== GATEWAY_TOKEN) {
-        return res.status(401).json({ error: 'Unauthorized' });
-    }
+    const incomingToken = req.headers['x-gateway-token'];
 
-    const { timestamp, device_id, button_pressed, gateway_id, sos_alert } = req.body;
-
-    if (!sos_alert) {
-        return res.status(200).json({ success: true, message: 'Non-SOS data ignored' });
-    }
-
-    const sql = `
-        INSERT INTO sos_events (timestamp, device_id, button_pressed, gateway_id, synced_at)
-        VALUES (?, ?, ?, ?, ?)
-    `;
-
-    db.run(sql, [timestamp, device_id, button_pressed, gateway_id, Date.now()], function(err) {
+    validateToken(incomingToken, (err, gateway) => {
         if (err) {
-            console.error('Database error:', err);
-            return res.status(500).json({ error: 'Failed to store data' });
+            console.error('[AUTH] DB error:', err);
+            return res.status(500).json({ error: 'Internal error' });
+        }
+        if (!gateway) {
+            return res.status(401).json({ error: 'Unauthorized — gateway not registered' });
         }
 
-        const event = { id: this.lastID, timestamp, device_id, button_pressed, gateway_id };
+        // Update last_seen_at
+        db.run('UPDATE gateways SET last_seen_at = ? WHERE id = ?', [Date.now(), gateway.id]);
 
-        console.log('🚨 SOS ALERT from device:', device_id, '— clicks:', button_pressed);
-        broadcast({ type: 'sos', event });
+        const { timestamp, device_id, button_pressed, gateway_id, sos_alert } = req.body;
 
-        res.status(201).json({ success: true, id: this.lastID });
+        if (!sos_alert) {
+            return res.status(200).json({ success: true, message: 'Non-SOS data ignored' });
+        }
+
+        const sql = `
+            INSERT INTO sos_events (timestamp, device_id, button_pressed, gateway_id, synced_at)
+            VALUES (?, ?, ?, ?, ?)
+        `;
+
+        db.run(sql, [timestamp, device_id, button_pressed, gateway_id, Date.now()], function (err) {
+            if (err) {
+                console.error('Database error:', err);
+                return res.status(500).json({ error: 'Failed to store data' });
+            }
+
+            const event = { id: this.lastID, timestamp, device_id, button_pressed, gateway_id };
+
+            console.log('🚨 SOS ALERT from device:', device_id, '— clicks:', button_pressed);
+            broadcast({ type: 'sos', event });
+
+            res.status(201).json({ success: true, id: this.lastID });
+        });
     });
 });
 
@@ -108,6 +177,18 @@ app.get('/api/alerts/sos', (req, res) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json({ alerts: rows });
     });
+});
+
+// Get registered gateways (for cloud dashboard)
+app.get('/api/gateways', (req, res) => {
+    db.all(
+        `SELECT gateway_id, device_id, registered_at, last_seen_at FROM gateways ORDER BY registered_at DESC`,
+        [],
+        (err, rows) => {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ gateways: rows });
+        }
+    );
 });
 
 // Start
