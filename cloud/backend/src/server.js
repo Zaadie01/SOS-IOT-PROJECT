@@ -20,7 +20,7 @@ app.use(express.json());
 app.use(morgan('combined'));
 
 // Database setup
-const dbPath = path.join(__dirname, 'data', 'gateway_data.db');
+const dbPath = path.join(__dirname, '..', 'data', 'gateway_data.db');
 const db = new sqlite3.Database(dbPath, (err) => {
     if (err) {
         console.error('Error opening database:', err);

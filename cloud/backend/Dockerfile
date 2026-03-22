@@ -9,10 +9,10 @@ COPY package*.json ./
 
 RUN npm install --omit=dev
 
-COPY server.js ./
+COPY src/ ./src/
 
 RUN mkdir -p data
 
 EXPOSE 3001
 
-CMD ["node", "server.js"]
+CMD ["node", "src/server.js"]

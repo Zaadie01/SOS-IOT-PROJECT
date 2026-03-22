@@ -12,7 +12,7 @@ export default function Dashboard({ alerts }) {
                 </div>
                 <div className="stat-card">
                     <div className="stat-value">{uniqueDevices}</div>
-                    <div className="stat-label">Active Devices</div>
+                    <div className="stat-label">Registered Devices</div>
                 </div>
             </div>
 
