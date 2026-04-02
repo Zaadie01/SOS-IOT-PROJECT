@@ -1,0 +1,328 @@
+type: collection.insomnia.rest/5.0
+schema_version: "5.1"
+name: SOS Gateway API
+meta:
+  id: wrk_9e49ffc21a0848e1a48207fcca839ca3
+  created: 1775120803760
+  modified: 1775120803760
+  description: ""
+collection:
+  - name: Health
+    meta:
+      id: fld_76586d4f30984dbe9420604799932e77
+      created: 1775120803761
+      modified: 1775120803761
+      sortKey: -1775120803761
+      description: ""
+    children:
+      - url: "{{ base_url }}/"
+        name: GET / — Health Check
+        meta:
+          id: req_0f1b21566b874028aa5ca8b2553c1b83
+          created: 1775120803761
+          modified: 1775120803761
+          isPrivate: false
+          description: ""
+          sortKey: -1775120803761
+        method: GET
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+  - name: Gateway
+    meta:
+      id: fld_960ff16ded2e49878c324d175f0a67c1
+      created: 1775120803762
+      modified: 1775120803762
+      sortKey: -1775120803762
+      description: ""
+    children:
+      - url: "{{ base_url }}/api/gateway/register"
+        name: POST /api/gateway/register ❌ Invalid secret (401)
+        meta:
+          id: req_0e60497538ac4a7cae6adf4720adddf7
+          created: 1775120803762
+          modified: 1775121444452
+          isPrivate: false
+          description: ""
+          sortKey: -1775120803762
+        method: POST
+        body:
+          mimeType: application/json
+          text: |-
+            {
+              "gateway_id": "{{ gateway_id }}",
+              "secret": "WRONG_SECRET"
+            }
+        headers:
+          - name: Content-Type
+            value: application/json
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+      - url: "{{ base_url }}/api/gateway/register"
+        name: POST /api/gateway/register Register Gateway
+        meta:
+          id: req_e5875a05917048de9307d14ff2364cf8
+          created: 1775120803762
+          modified: 1775121441950
+          isPrivate: false
+          description: ""
+          sortKey: -1775120803762
+        method: POST
+        body:
+          mimeType: application/json
+          text: |-
+            {
+              "gateway_id": "{{ gateway_id }}",
+              "device_id": "{{ device_id }}",
+              "secret": "{{ registration_secret }}"
+            }
+        headers:
+          - name: Content-Type
+            value: application/json
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+      - url: "{{ base_url }}/api/gateways"
+        name: GET /api/gateways list of gateways
+        meta:
+          id: req_0bda74b0a58e41af93079d8b18db8f73
+          created: 1775120803764
+          modified: 1775121439514
+          isPrivate: false
+          description: ""
+          sortKey: -1775120803764
+        method: GET
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+      - url: "{{ base_url }}/api/gateway/register"
+        name: POST /api/gateway/register ❌ No gateway_id (400)
+        meta:
+          id: req_f425195a46ea4c4cb5cd2fbb8cdf304e
+          created: 1775120803764
+          modified: 1775121436651
+          isPrivate: false
+          description: ""
+          sortKey: -1775120803764
+        method: POST
+        body:
+          mimeType: application/json
+          text: |-
+            {
+              "secret": "{{ registration_secret }}"
+            }
+        headers:
+          - name: Content-Type
+            value: application/json
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+  - name: Gateway Data
+    meta:
+      id: fld_e2e716c01fa64c88b61faa635253570e
+      created: 1775120803764
+      modified: 1775120803764
+      sortKey: -1775120803764
+      description: ""
+    children:
+      - url: "{{ base_url }}/api/gateway/data"
+        name: POST /api/gateway/data Non-SOS (ignored)
+        meta:
+          id: req_12a82e42ff2844ea895cd6e63703fa5a
+          created: 1775120803765
+          modified: 1775121434400
+          isPrivate: false
+          description: ""
+          sortKey: -1775120803765
+        method: POST
+        body:
+          mimeType: application/json
+          text: |-
+            {
+              "timestamp": 1711929600000,
+              "device_id": "{{ device_id }}",
+              "button_pressed": 0,
+              "gateway_id": "{{ gateway_id }}",
+              "sos_alert": false
+            }
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: x-gateway-token
+            value: "{{ gateway_token }}"
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+      - url: "{{ base_url }}/api/gateway/data"
+        name: POST /api/gateway/data ✅ SOS Alert
+        meta:
+          id: req_94b94068ed1746eea928e891ade17467
+          created: 1775120803765
+          modified: 1775121431829
+          isPrivate: false
+          description: ""
+          sortKey: -1775120803765
+        method: POST
+        body:
+          mimeType: application/json
+          text: |-
+            {
+              "timestamp": 1711929600000,
+              "device_id": "{{ device_id }}",
+              "button_pressed": 3,
+              "gateway_id": "{{ gateway_id }}",
+              "sos_alert": true
+            }
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: x-gateway-token
+            value: "{{ gateway_token }}"
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+      - url: "{{ base_url }}/api/gateway/data"
+        name: POST /api/gateway/data ❌ No token
+        meta:
+          id: req_84d40d0b97a841c19790a851f2dd3a6b
+          created: 1775120803766
+          modified: 1775121429445
+          isPrivate: false
+          description: ""
+          sortKey: -1775120803766
+        method: POST
+        body:
+          mimeType: application/json
+          text: |-
+            {
+              "timestamp": 1711929600000,
+              "device_id": "{{ device_id }}",
+              "button_pressed": 1,
+              "gateway_id": "{{ gateway_id }}",
+              "sos_alert": true
+            }
+        headers:
+          - name: Content-Type
+            value: application/json
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+      - url: "{{ base_url }}/api/gateway/data"
+        name: POST /api/gateway/data  ❌ Unacceptable token
+        meta:
+          id: req_ef699e625ef54c978e59ef80316ba2db
+          created: 1775120803766
+          modified: 1775121422998
+          isPrivate: false
+          description: ""
+          sortKey: -1775120803766
+        method: POST
+        body:
+          mimeType: application/json
+          text: |-
+            {
+              "timestamp": 1711929600000,
+              "device_id": "{{ device_id }}",
+              "button_pressed": 1,
+              "gateway_id": "{{ gateway_id }}",
+              "sos_alert": true
+            }
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: x-gateway-token
+            value: invalid_token_12345
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+  - name: Alerts
+    meta:
+      id: fld_bb1dba645436441da19b0c144c48ce3d
+      created: 1775120803766
+      modified: 1775120803766
+      sortKey: -1775120803766
+      description: ""
+    children:
+      - url: "{{ base_url }}/api/alerts/sos"
+        name: GET /api/alerts/sos get alerts
+        meta:
+          id: req_e2c623a7a16b4ce28e38002b58af221a
+          created: 1775120803767
+          modified: 1775121427117
+          isPrivate: false
+          description: ""
+          sortKey: -1775120803767
+        method: GET
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+cookieJar:
+  name: Default Jar
+  meta:
+    id: jar_45715b405a4b15f961f440cb3aad8c84efdd7bcd
+    created: 1775120803845
+    modified: 1775120803845
+environments:
+  name: Base Environment
+  meta:
+    id: env_d5f7c979ca184f068152eff98ce8c597
+    created: 1775120803760
+    modified: 1775121389526
+    isPrivate: false
+  data:
+    base_url:
+    registration_secret: 
+    gateway_id:
+    device_id: 
+    gateway_token:
