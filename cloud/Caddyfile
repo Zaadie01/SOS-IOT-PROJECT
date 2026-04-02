@@ -1,9 +1,11 @@
-:80 {
+app-project.org,
+www.app-project.org {
     handle /ws {
-        reverse_proxy backend:3001
+        reverse_proxy backend: 3001
     }
 
-    handle /api/* {
+    handle /api
+    /* {
         reverse_proxy backend:3001
     }
 
