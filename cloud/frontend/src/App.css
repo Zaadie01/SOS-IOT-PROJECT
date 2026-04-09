@@ -162,8 +162,9 @@ main { padding: 2rem; max-width: 1200px; margin: 0 auto; }
   padding: 1.25rem;
   border: 1px solid #334155;
 }
-.gw-active  { border-color: #065f46; }
+.gw-active   { border-color: #065f46; }
 .gw-inactive { border-color: #7f1d1d; }
+.gw-warning  { border-color: #92400e; }
 
 .gw-card-header {
   display: flex;
@@ -182,6 +183,7 @@ main { padding: 2rem; max-width: 1200px; margin: 0 auto; }
 }
 .badge-active   { background: #064e3b; color: #34d399; }
 .badge-inactive { background: #7f1d1d; color: #f87171; }
+.badge-warning  { background: #78350f; color: #fcd34d; }
 
 .gw-rows { display: flex; flex-direction: column; gap: 0.5rem; }
 .gw-row {
@@ -195,3 +197,12 @@ main { padding: 2rem; max-width: 1200px; margin: 0 auto; }
 .gw-value-sm { font-size: 0.75rem; color: #94a3b8; }
 .val-active   { color: #34d399; }
 .val-inactive { color: #f87171; }
+
+.gw-warning-msg {
+  margin-bottom: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  background: #78350f;
+  border-radius: 0.375rem;
+  color: #fcd34d;
+  font-size: 0.8rem;
+}

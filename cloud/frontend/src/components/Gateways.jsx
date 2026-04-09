@@ -52,7 +52,8 @@ export default function Gateways() {
             <div className="gateways-header">
                 <h2>Registered Gateways</h2>
                 <div className="gateways-meta">
-                    {lastRefresh && <span className="last-update">Updated {formatTs(lastRefresh)}</span>}
+                    <span className="last-update">Auto-updates every 30s</span>
+                    {lastRefresh && <span className="last-update">· Updated {formatTs(lastRefresh)}</span>}
                     <button className="refresh-btn" onClick={refresh}>Refresh</button>
                 </div>
             </div>
@@ -65,14 +66,21 @@ export default function Gateways() {
                 <div className="gateway-cards">
                     {gateways.map(gw => {
                         const active = gw.last_seen_at && (Date.now() - gw.last_seen_at) < INACTIVE_THRESHOLD_MS;
+                        const hasWarning = !!gw.warning;
+                        const cardClass = hasWarning ? 'gw-warning' : active ? 'gw-active' : 'gw-inactive';
+                        const badgeClass = hasWarning ? 'badge-warning' : active ? 'badge-active' : 'badge-inactive';
+                        const badgeText  = hasWarning ? 'Warning' : active ? 'Active' : 'Inactive';
                         return (
-                            <div key={gw.gateway_id} className={`gateway-card ${active ? 'gw-active' : 'gw-inactive'}`}>
+                            <div key={gw.gateway_id} className={`gateway-card ${cardClass}`}>
                                 <div className="gw-card-header">
                                     <span className="gw-id">{gw.gateway_id}</span>
-                                    <span className={`gw-badge ${active ? 'badge-active' : 'badge-inactive'}`}>
-                                        {active ? 'Active' : 'Inactive'}
+                                    <span className={`gw-badge ${badgeClass}`}>
+                                        {badgeText}
                                     </span>
                                 </div>
+                                {hasWarning && (
+                                    <div className="gw-warning-msg">{gw.warning}</div>
+                                )}
                                 <div className="gw-rows">
                                     <div className="gw-row">
                                         <span className="gw-label">Device</span>

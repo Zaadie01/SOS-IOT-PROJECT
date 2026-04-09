@@ -39,9 +39,13 @@ function initDatabase() {
             device_id     TEXT,
             token         TEXT UNIQUE NOT NULL,
             registered_at INTEGER NOT NULL,
-            last_seen_at  INTEGER
+            last_seen_at  INTEGER,
+            warning       TEXT
         )
     `);
+
+    // Migration for existing databases: add warning column if it doesn't exist yet
+    db.run(`ALTER TABLE gateways ADD COLUMN warning TEXT`, () => {});
 
     db.run(`
         CREATE TABLE IF NOT EXISTS sos_events (
@@ -190,6 +194,41 @@ app.post('/api/gateway/ping', (req, res) => {
     });
 });
 
+// Warning — gateway reports a problem (message) or clears it (message: null)
+app.post('/api/gateway/warning', (req, res) => {
+    const incomingToken = req.headers['x-gateway-token'];
+
+    validateToken(incomingToken, (err, gateway) => {
+        if (err) {
+            console.error('[WARNING] DB error:', err);
+            return res.status(500).json({ error: 'Internal error' });
+        }
+        if (!gateway) {
+            return res.status(401).json({ error: 'Unauthorized — gateway not registered' });
+        }
+
+        const { message } = req.body;
+        const warning = message || null;
+
+        db.run(
+            'UPDATE gateways SET last_seen_at = ?, warning = ? WHERE id = ?',
+            [Date.now(), warning, gateway.id],
+            (dbErr) => {
+                if (dbErr) {
+                    console.error('[WARNING] DB error:', dbErr);
+                    return res.status(500).json({ error: 'Internal error' });
+                }
+                if (warning) {
+                    console.warn(`[WARNING] Gateway ${gateway.gateway_id}: ${warning}`);
+                } else {
+                    console.log(`[WARNING] Gateway ${gateway.gateway_id}: warning cleared`);
+                }
+                res.json({ ok: true });
+            }
+        );
+    });
+});
+
 // Get SOS history
 app.get('/api/alerts/sos', (req, res) => {
     db.all(`SELECT * FROM sos_events ORDER BY timestamp DESC`, [], (err, rows) => {
@@ -201,7 +240,7 @@ app.get('/api/alerts/sos', (req, res) => {
 // Get registered gateways (for cloud dashboard)
 app.get('/api/gateways', (req, res) => {
     db.all(
-        `SELECT gateway_id, device_id, registered_at, last_seen_at FROM gateways ORDER BY registered_at DESC`,
+        `SELECT gateway_id, device_id, registered_at, last_seen_at, warning FROM gateways ORDER BY registered_at DESC`,
         [],
         (err, rows) => {
             if (err) return res.status(500).json({ error: err.message });
@@ -213,7 +252,7 @@ app.get('/api/gateways', (req, res) => {
 // Get single gateway status by ID
 app.get('/api/gateways/:gateway_id', (req, res) => {
     db.get(
-        `SELECT gateway_id, device_id, registered_at, last_seen_at FROM gateways WHERE gateway_id = ?`,
+        `SELECT gateway_id, device_id, registered_at, last_seen_at, warning FROM gateways WHERE gateway_id = ?`,
         [req.params.gateway_id],
         (err, row) => {
             if (err) return res.status(500).json({ error: err.message });

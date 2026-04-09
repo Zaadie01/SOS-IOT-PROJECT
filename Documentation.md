@@ -293,8 +293,22 @@ The cloud responds with:
 On success, `state.cloudOnline` is set to `true` and the server updates `last_seen_at` for this gateway.
 On failure, `state.cloudOnline` is set to `false` and the error is logged once.
 
+The first heartbeat is sent immediately after registration (or token load), without waiting for the first interval tick.
+
 This ensures the server always knows the gateway is alive even when no SOS events are occurring.
 The gateway cannot be pinged directly by the server because it runs on a local network behind NAT.
+
+### Warning System
+
+The gateway reports problems to the cloud via `POST /api/gateway/warning`. Only one active warning is tracked at a time — duplicate sends are suppressed by a local `state.warningActive` flag.
+
+| Event | Action |
+|-------|--------|
+| `port.on('close')` | Sends warning `"IoT node disconnected"` |
+| `port.on('error')` | Sends warning `"Serial port error: <message>"` |
+| `openPort()` success (reconnect) | Clears warning (`message: null`) |
+
+The warning is visible in `GET /api/gateways` and reflected in the frontend as a yellow gateway card.
 
 ### Starting the Gateway
 
@@ -328,6 +342,8 @@ Dashboard:   http://localhost:8080
 [SERIAL] HARDWARIO reset complete, listening...
 [REGISTER] Registering gateway "gateway-001" with cloud...
 [REGISTER] Registration successful — token saved to local DB
+[HEARTBEAT] Cloud back online
+[HEARTBEAT] OK — server_time=1700000000000
 ```
 
 > Serial port and cloud registration start in **parallel** — SOS events are captured and buffered locally from the very first second, even if the cloud is not yet reachable.
@@ -353,7 +369,8 @@ An Express.js server with a SQLite database and a WebSocket server. Runs inside 
 | `device_id` | TEXT | Associated HARDWARIO device ID |
 | `token` | TEXT | Unique auth token issued to this gateway |
 | `registered_at` | INTEGER | Unix ms timestamp of first registration |
-| `last_seen_at` | INTEGER | Unix ms timestamp of last data upload |
+| `last_seen_at` | INTEGER | Unix ms timestamp of last heartbeat or data upload |
+| `warning` | TEXT | Active warning message from the gateway (NULL = no warning) |
 
 **Table `sos_events`** — stores every SOS alert received from any gateway:
 
@@ -374,6 +391,7 @@ An Express.js server with a SQLite database and a WebSocket server. Runs inside 
 | `POST` | `/api/gateway/register` | Register a new gateway, receive unique token | Registration secret |
 | `POST` | `/api/gateway/data` | Receive SOS event data from a gateway | Per-gateway token |
 | `POST` | `/api/gateway/ping` | Heartbeat — gateway confirms it is alive, updates `last_seen_at` | Per-gateway token |
+| `POST` | `/api/gateway/warning` | Set or clear a warning message for this gateway | Per-gateway token |
 | `GET` | `/api/alerts/sos` | Get full SOS event history | No |
 | `GET` | `/api/gateways` | List all registered gateways and their last seen time | No |
 | `GET` | `/api/gateways/:gateway_id` | Get status of a single gateway by ID | No |
@@ -428,7 +446,31 @@ Response `200`:
 { "ok": true, "server_time": 1700000000000 }
 ```
 
-Updates `last_seen_at` in the `gateways` table. Called automatically by the gateway every 60 seconds.
+Updates `last_seen_at` in the `gateways` table. Called automatically by the gateway every 60 seconds and also once immediately after registration.
+
+### POST /api/gateway/warning
+
+Request headers:
+```
+x-gateway-token: <token received after registration>
+```
+
+Request body — set a warning:
+```json
+{ "message": "IoT node disconnected" }
+```
+
+Request body — clear the warning:
+```json
+{ "message": null }
+```
+
+Response `200`:
+```json
+{ "ok": true }
+```
+
+Stores the message in the `warning` column of the `gateways` table. If `message` is `null` or omitted, the warning is cleared. The gateway sends this automatically — one warning is sent on serial disconnect, and it is cleared on successful reconnect. Duplicate warnings are suppressed by a local `warningActive` flag.
 
 ### GET /api/gateways/:gateway_id
 
@@ -439,7 +481,8 @@ Response `200`:
     "gateway_id": "gateway-001",
     "device_id": "hardwario-001",
     "registered_at": 1700000000000,
-    "last_seen_at": 1700000060000
+    "last_seen_at": 1700000060000,
+    "warning": null
   }
 }
 ```
@@ -492,9 +535,12 @@ App.js
 └── [Gateways tab]
     └── Gateways.jsx     — cards for every registered gateway:
                            gateway_id, device_id, last ping (relative + absolute),
-                           registered_at, Active/Inactive badge
-                           (inactive = last ping > 5 min ago)
-                           auto-refreshes every 30 s; manual Refresh button
+                           registered_at, status badge, warning message
+                           badge states: Active (green) / Warning (yellow) / Inactive (red)
+                           warning shown if gateway.warning is not null
+                           inactive = last ping > 5 min ago
+                           auto-refreshes every 30 s with "Auto-updates every 30s" label;
+                           manual Refresh button
 ```
 
 ### Real-time Updates
@@ -635,6 +681,7 @@ A gateway that loses its local DB (e.g. volume deleted) re-registers automatical
 | `POST /api/gateway/register` | `REGISTRATION_SECRET` required in body |
 | `POST /api/gateway/data` | Per-gateway token required in `x-gateway-token` header |
 | `POST /api/gateway/ping` | Per-gateway token required in `x-gateway-token` header |
+| `POST /api/gateway/warning` | Per-gateway token required in `x-gateway-token` header |
 | `GET /api/alerts/sos` | Open — anyone can read history |
 | `GET /api/gateways` | Open — anyone can see registered gateways |
 | `GET /api/gateways/:gateway_id` | Open — anyone can query a gateway by ID |
@@ -832,6 +879,24 @@ curl http://209.38.221.215/api/gateways/gateway-001
 curl -X POST http://209.38.221.215/api/gateway/ping \
   -H "x-gateway-token: <token>"
 # Expected: {"ok":true,"server_time":1700000000000}
+```
+
+**POST /api/gateway/warning — set a warning:**
+```bash
+curl -X POST http://209.38.221.215/api/gateway/warning \
+  -H "Content-Type: application/json" \
+  -H "x-gateway-token: <token>" \
+  -d '{"message":"IoT node disconnected"}'
+# Expected: {"ok":true}
+```
+
+**POST /api/gateway/warning — clear the warning:**
+```bash
+curl -X POST http://209.38.221.215/api/gateway/warning \
+  -H "Content-Type: application/json" \
+  -H "x-gateway-token: <token>" \
+  -d '{"message":null}'
+# Expected: {"ok":true}
 ```
 
 **GET / — backend health check:**

@@ -80,6 +80,7 @@ const stmtLastEvent    = db.prepare(
 const state = {
     cloudOnline:     false,
     serialConnected: false,
+    warningActive:   false,
     lastEventAt:     null,
     lastUploadAt:    null,
     startedAt:       Date.now(),
@@ -186,6 +187,35 @@ async function heartbeat() {
 }
 
 // ---------------------------------------------------------------------------
+// Warning — report a problem to the cloud (or clear it)
+// message = string → set warning; message = null → clear warning
+// Sends only when the warning state actually changes (one warning at a time).
+// ---------------------------------------------------------------------------
+
+async function sendWarning(message) {
+    if (!CONFIG.gatewayToken) return;
+    const isWarning = message !== null;
+    if (isWarning && state.warningActive) return;   // already warned, don't spam
+    if (!isWarning && !state.warningActive) return; // nothing to clear
+
+    try {
+        await axios.post(
+            `${CONFIG.cloudUrl}/api/gateway/warning`,
+            { message },
+            {
+                headers: { 'x-gateway-token': CONFIG.gatewayToken },
+                timeout: 5000,
+            }
+        );
+        state.warningActive = isWarning;
+        if (isWarning) console.warn(`[WARNING] Sent: ${message}`);
+        else           console.log('[WARNING] Cleared');
+    } catch (err) {
+        console.error(`[WARNING] Failed to send: ${err.message}`);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Cloud upload
 // ---------------------------------------------------------------------------
 
@@ -269,11 +299,13 @@ parser.on('data', (line) => {
 port.on('error', (err) => {
     state.serialConnected = false;
     console.error('[SERIAL] Error:', err.message);
+    sendWarning(`Serial port error: ${err.message}`).catch(console.error);
 });
 
 port.on('close', () => {
     state.serialConnected = false;
     console.log('[SERIAL] Port closed — reconnecting in 3 s...');
+    sendWarning('IoT node disconnected').catch(console.error);
     setTimeout(openPort, 3000);
 });
 
@@ -286,6 +318,7 @@ function openPort() {
         }
         state.serialConnected = true;
         console.log(`[SERIAL] Reconnected to ${CONFIG.serialPort}`);
+        sendWarning(null).catch(console.error);
         port.set({ dtr: false }, () => {
             setTimeout(() => {
                 port.set({ dtr: true }, () => {
@@ -445,7 +478,10 @@ initPort().catch((err) => {
 
 // Registration and upload run in parallel — cloud is optional for local operation
 registerWithCloud()
-    .then(() => uploadPending().catch(console.error))
+    .then(() => {
+        heartbeat().catch(console.error);
+        uploadPending().catch(console.error);
+    })
     .catch((err) => {
         console.error('[STARTUP] Fatal error:', err.message);
         process.exit(1);

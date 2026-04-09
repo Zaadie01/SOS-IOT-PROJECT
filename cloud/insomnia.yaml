@@ -116,6 +116,103 @@ collection:
             send: true
             store: true
           rebuildPath: true
+      - url: "{{ base_url }}/api/gateways/{{ gateway_id }}"
+        name: GET /api/gateways/:id — single gateway status
+        meta:
+          id: req_a1b2c3d4e5f64a7b8c9d0e1f2a3b4c5d
+          created: 1775120803764
+          modified: 1775120803764
+          isPrivate: false
+          description: ""
+          sortKey: -1775120803763
+        method: GET
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+      - url: "{{ base_url }}/api/gateway/ping"
+        name: POST /api/gateway/ping ✅ Heartbeat
+        meta:
+          id: req_b2c3d4e5f6a74b8c9d0e1f2a3b4c5d6e
+          created: 1775120803764
+          modified: 1775120803764
+          isPrivate: false
+          description: ""
+          sortKey: -1775120803762
+        method: POST
+        headers:
+          - name: x-gateway-token
+            value: "{{ gateway_token }}"
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+      - url: "{{ base_url }}/api/gateway/warning"
+        name: POST /api/gateway/warning ✅ Set warning
+        meta:
+          id: req_c3d4e5f6a7b84c9d0e1f2a3b4c5d6e7f
+          created: 1775120803764
+          modified: 1775120803764
+          isPrivate: false
+          description: ""
+          sortKey: -1775120803761
+        method: POST
+        body:
+          mimeType: application/json
+          text: |-
+            {
+              "message": "IoT node disconnected"
+            }
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: x-gateway-token
+            value: "{{ gateway_token }}"
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
+      - url: "{{ base_url }}/api/gateway/warning"
+        name: POST /api/gateway/warning ✅ Clear warning
+        meta:
+          id: req_d4e5f6a7b8c94d0e1f2a3b4c5d6e7f8a
+          created: 1775120803764
+          modified: 1775120803764
+          isPrivate: false
+          description: ""
+          sortKey: -1775120803760
+        method: POST
+        body:
+          mimeType: application/json
+          text: |-
+            {
+              "message": null
+            }
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: x-gateway-token
+            value: "{{ gateway_token }}"
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies:
+            send: true
+            store: true
+          rebuildPath: true
       - url: "{{ base_url }}/api/gateway/register"
         name: POST /api/gateway/register ❌ No gateway_id (400)
         meta:
