@@ -14,3 +14,10 @@ export async function fetchGateways() {
     const json = await res.json();
     return json.gateways;
 }
+
+export async function fetchGateway(gatewayId) {
+    const res = await fetch(`${BASE_URL}/gateways/${encodeURIComponent(gatewayId)}`);
+    if (!res.ok) throw new Error('Failed to fetch gateway');
+    const json = await res.json();
+    return json.gateway;
+}

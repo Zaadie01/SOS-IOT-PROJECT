@@ -171,6 +171,25 @@ app.post('/api/gateway/data', (req, res) => {
     });
 });
 
+// Heartbeat — gateway confirms it is alive
+app.post('/api/gateway/ping', (req, res) => {
+    const incomingToken = req.headers['x-gateway-token'];
+
+    validateToken(incomingToken, (err, gateway) => {
+        if (err) {
+            console.error('[PING] DB error:', err);
+            return res.status(500).json({ error: 'Internal error' });
+        }
+        if (!gateway) {
+            return res.status(401).json({ error: 'Unauthorized — gateway not registered' });
+        }
+
+        db.run('UPDATE gateways SET last_seen_at = ? WHERE id = ?', [Date.now(), gateway.id]);
+        console.log(`[PING] Heartbeat from gateway: ${gateway.gateway_id}`);
+        res.json({ ok: true, server_time: Date.now() });
+    });
+});
+
 // Get SOS history
 app.get('/api/alerts/sos', (req, res) => {
     db.all(`SELECT * FROM sos_events ORDER BY timestamp DESC`, [], (err, rows) => {
@@ -187,6 +206,19 @@ app.get('/api/gateways', (req, res) => {
         (err, rows) => {
             if (err) return res.status(500).json({ error: err.message });
             res.json({ gateways: rows });
+        }
+    );
+});
+
+// Get single gateway status by ID
+app.get('/api/gateways/:gateway_id', (req, res) => {
+    db.get(
+        `SELECT gateway_id, device_id, registered_at, last_seen_at FROM gateways WHERE gateway_id = ?`,
+        [req.params.gateway_id],
+        (err, row) => {
+            if (err) return res.status(500).json({ error: err.message });
+            if (!row) return res.status(404).json({ error: 'Gateway not found' });
+            res.json({ gateway: row });
         }
     );
 });

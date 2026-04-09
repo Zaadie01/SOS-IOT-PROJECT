@@ -25,6 +25,8 @@ const CONFIG = {
     sentRetentionMs:    parseInt(process.env.SENT_RETENTION_MS)    || 24 * 60 * 60 * 1000,
     // How long to wait between registration retry attempts
     registerRetryMs:    parseInt(process.env.REGISTER_RETRY_MS)    || 10 * 1000,
+    // How often to send a heartbeat ping to the cloud
+    heartbeatIntervalMs: parseInt(process.env.HEARTBEAT_INTERVAL_MS) || 60 * 1000,
 };
 
 // ---------------------------------------------------------------------------
@@ -155,6 +157,30 @@ async function pingCloud() {
         state.cloudOnline = true;
     } catch {
         if (state.cloudOnline) console.error('[PING] Cloud went offline');
+        state.cloudOnline = false;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Heartbeat — periodically tell the cloud we are alive
+// ---------------------------------------------------------------------------
+
+async function heartbeat() {
+    if (!CONFIG.gatewayToken) return; // not registered yet
+    try {
+        const res = await axios.post(
+            `${CONFIG.cloudUrl}/api/gateway/ping`,
+            {},
+            {
+                headers: { 'x-gateway-token': CONFIG.gatewayToken },
+                timeout: 5000,
+            }
+        );
+        if (!state.cloudOnline) console.log('[HEARTBEAT] Cloud back online');
+        state.cloudOnline = true;
+        console.log(`[HEARTBEAT] OK — server_time=${res.data.server_time}`);
+    } catch (err) {
+        if (state.cloudOnline) console.error(`[HEARTBEAT] Cloud offline: ${err.message}`);
         state.cloudOnline = false;
     }
 }
@@ -408,6 +434,9 @@ setInterval(async () => {
     await uploadPending();
     cleanupSent();
 }, CONFIG.uploadIntervalMs);
+
+// Heartbeat timer — let the cloud know we are alive
+setInterval(() => heartbeat().catch(console.error), CONFIG.heartbeatIntervalMs);
 
 // Serial port starts immediately — no cloud required to receive local SOS events
 initPort().catch((err) => {

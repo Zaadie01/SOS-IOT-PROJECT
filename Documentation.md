@@ -231,6 +231,7 @@ The gateway is a Node.js process running inside a Docker container on the laptop
 | `UPLOAD_INTERVAL_MS` | How often to retry uploading pending events | `30000` (30 s) |
 | `SENT_RETENTION_MS` | How long to keep sent events before deleting | `86400000` (24 h) |
 | `REGISTER_RETRY_MS` | Retry interval if registration fails | `10000` (10 s) |
+| `HEARTBEAT_INTERVAL_MS` | How often to send a liveness ping to the cloud | `60000` (60 s) |
 
 ### Local Database Schema
 
@@ -274,6 +275,26 @@ It displays:
 - Gateway uptime
 
 The dashboard auto-refreshes every 10 seconds. A `/status` endpoint returns the same data as JSON.
+
+### Heartbeat (Liveness Ping)
+
+Every 60 seconds (configurable via `HEARTBEAT_INTERVAL_MS`) the gateway sends a heartbeat to the cloud:
+
+```
+POST /api/gateway/ping
+x-gateway-token: <per-gateway token>
+```
+
+The cloud responds with:
+```json
+{ "ok": true, "server_time": 1700000000000 }
+```
+
+On success, `state.cloudOnline` is set to `true` and the server updates `last_seen_at` for this gateway.
+On failure, `state.cloudOnline` is set to `false` and the error is logged once.
+
+This ensures the server always knows the gateway is alive even when no SOS events are occurring.
+The gateway cannot be pinged directly by the server because it runs on a local network behind NAT.
 
 ### Starting the Gateway
 
@@ -352,8 +373,10 @@ An Express.js server with a SQLite database and a WebSocket server. Runs inside 
 | `GET` | `/` | Health check + active WebSocket client count | No |
 | `POST` | `/api/gateway/register` | Register a new gateway, receive unique token | Registration secret |
 | `POST` | `/api/gateway/data` | Receive SOS event data from a gateway | Per-gateway token |
+| `POST` | `/api/gateway/ping` | Heartbeat — gateway confirms it is alive, updates `last_seen_at` | Per-gateway token |
 | `GET` | `/api/alerts/sos` | Get full SOS event history | No |
 | `GET` | `/api/gateways` | List all registered gateways and their last seen time | No |
+| `GET` | `/api/gateways/:gateway_id` | Get status of a single gateway by ID | No |
 
 ### POST /api/gateway/register
 
@@ -393,6 +416,36 @@ Request body:
 
 If `sos_alert !== 1`, the record is acknowledged but not stored.
 
+### POST /api/gateway/ping
+
+Request headers:
+```
+x-gateway-token: <token received after registration>
+```
+
+Response `200`:
+```json
+{ "ok": true, "server_time": 1700000000000 }
+```
+
+Updates `last_seen_at` in the `gateways` table. Called automatically by the gateway every 60 seconds.
+
+### GET /api/gateways/:gateway_id
+
+Response `200`:
+```json
+{
+  "gateway": {
+    "gateway_id": "gateway-001",
+    "device_id": "hardwario-001",
+    "registered_at": 1700000000000,
+    "last_seen_at": 1700000060000
+  }
+}
+```
+
+Response `404` if no gateway with that ID exists.
+
 ### WebSocket
 
 The WebSocket server runs on the same HTTP server as Express, on path `/ws`.
@@ -428,10 +481,20 @@ A React 18 application compiled to static files and served by nginx.
 App.js
 ├── connects to WebSocket on mount (auto-reconnects every 3 s on drop)
 ├── fetches SOS history via GET /api/alerts/sos on mount
-├── SOSAlert.jsx     — red flashing block only for alerts < 5 min old;
-│                      header shows "X total, Y recent"; last 5 events always visible
-└── Dashboard.jsx    — stats cards (total events, active devices)
-                       + event log table (last 20 alerts)
+├── tab navigation: Dashboard | Gateways
+│
+├── [Dashboard tab]
+│   ├── SOSAlert.jsx     — red flashing block only for alerts < 5 min old;
+│   │                      header shows "X total, Y recent"; last 5 events always visible
+│   └── Dashboard.jsx    — stats cards (total events, active devices)
+│                          + event log table (last 20 alerts)
+│
+└── [Gateways tab]
+    └── Gateways.jsx     — cards for every registered gateway:
+                           gateway_id, device_id, last ping (relative + absolute),
+                           registered_at, Active/Inactive badge
+                           (inactive = last ping > 5 min ago)
+                           auto-refreshes every 30 s; manual Refresh button
 ```
 
 ### Real-time Updates
@@ -463,9 +526,11 @@ Status indicators (header):
 | Indicator | Green | Red |
 |-----------|-------|-----|
 | **Live** | WebSocket connected — events arrive instantly | Dropped — reconnecting every 3 s |
-| **Gateway: Xm ago** | Gateway sent data within last 5 minutes | Last seen more than 5 minutes ago |
+| **Gateway: Xm ago** | Gateway sent data or heartbeat within last 5 minutes | Last seen more than 5 minutes ago |
 
 Gateway status is polled every 30 seconds and also refreshed immediately when a new SOS event arrives via WebSocket.
+
+`last_seen_at` is updated on every `POST /api/gateway/data` and `POST /api/gateway/ping`, so the indicator stays green even when no SOS events are occurring.
 
 ### SOSAlert — Recent vs Historical
 
@@ -569,8 +634,10 @@ A gateway that loses its local DB (e.g. volume deleted) re-registers automatical
 |----------|-----------|
 | `POST /api/gateway/register` | `REGISTRATION_SECRET` required in body |
 | `POST /api/gateway/data` | Per-gateway token required in `x-gateway-token` header |
+| `POST /api/gateway/ping` | Per-gateway token required in `x-gateway-token` header |
 | `GET /api/alerts/sos` | Open — anyone can read history |
 | `GET /api/gateways` | Open — anyone can see registered gateways |
+| `GET /api/gateways/:gateway_id` | Open — anyone can query a gateway by ID |
 | `GET /ws` | Open — anyone can connect and watch live alerts |
 
 ### Token Validation (Data Upload)
@@ -753,6 +820,18 @@ curl http://209.38.221.215/api/alerts/sos
 **GET /api/gateways — list registered gateways:**
 ```bash
 curl http://209.38.221.215/api/gateways
+```
+
+**GET /api/gateways/:id — single gateway status:**
+```bash
+curl http://209.38.221.215/api/gateways/gateway-001
+```
+
+**POST /api/gateway/ping — simulate heartbeat (requires a valid token):**
+```bash
+curl -X POST http://209.38.221.215/api/gateway/ping \
+  -H "x-gateway-token: <token>"
+# Expected: {"ok":true,"server_time":1700000000000}
 ```
 
 **GET / — backend health check:**
