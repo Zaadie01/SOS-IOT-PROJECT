@@ -528,7 +528,8 @@ App.js
 │
 ├── [Dashboard tab]
 │   ├── SOSAlert.jsx     — red flashing block only for alerts < 5 min old;
-│   │                      header shows "X total, Y recent"; last 5 events always visible
+│   │                      header shows "X total, Y recent" + "expires in N min" hint;
+│   │                      all recent alerts shown; list hidden once window expires
 │   └── Dashboard.jsx    — stats cards (total events, active devices)
 │                          + event log table (last 20 alerts)
 │
@@ -584,18 +585,20 @@ The component distinguishes between recent and historical alerts:
 
 | State | Condition | Visual |
 |-------|-----------|--------|
-| `has-alerts` (red) | At least one alert within the last 5 minutes | Red flashing section |
-| `no-alerts` (neutral) | All alerts older than 5 minutes | Neutral section with history |
+| `has-alerts` (red) | At least one alert within the last 5 minutes | Red flashing section, all recent alerts listed, "expires in N min" hint in header |
+| `no-alerts` (neutral) | All alerts older than 5 minutes | Neutral header only — no list; full history is in the `SOS History` section below |
 
-The last 5 alerts are always shown in the list regardless of age.
+The component re-evaluates the 5-minute window every 30 seconds, so the `🚨` badge and alert list disappear automatically without any user interaction.
 
 ### Build Process
 
+The React app is **built locally** (not inside Docker) and the compiled output is transferred to the server:
+
 ```
-npm run build  →  /app/build/  →  copied to nginx /usr/share/nginx/html
+npm run build  →  build/  →  scp to server  →  Docker copies to nginx
 ```
 
-The React app is compiled once during `docker compose build`. To apply frontend changes, rebuild with `docker compose up -d --build`.
+The frontend Dockerfile only serves the pre-built `build/` folder via nginx — it contains no Node.js or build tooling. This is required because the cloud server does not have enough RAM to run `npm install`.
 
 ---
 
@@ -777,15 +780,18 @@ docker compose up -d --build
 
 ### Cloud — Update After Code Changes
 
+**Backend changes:**
 ```bash
-# Copy changed files
-scp -r cloud/backend deploy@209.38.221.215:/home/deploy/sos-iot/cloud/
-scp -r cloud/frontend/src deploy@209.38.221.215:/home/deploy/sos-iot/cloud/frontend/
+scp -r cloud/backend deploy@209.38.221.215:~/cloud/
+ssh deploy@209.38.221.215 "cd ~/cloud && docker compose up -d --build backend"
+```
 
-# Rebuild and restart on server
-ssh deploy@209.38.221.215
-cd /home/deploy/sos-iot/cloud
-docker compose up -d --build
+**Frontend changes** (must be built locally first):
+```bash
+cd cloud/frontend
+npm run build
+scp -r build/ deploy@209.38.221.215:~/cloud/frontend/
+ssh deploy@209.38.221.215 "cd ~/cloud && docker compose up -d --build frontend"
 ```
 
 ### Reset the Cloud Database
