@@ -1,4 +1,5 @@
 // server.js
+require('dotenv').config();
 const http = require('http');
 const crypto = require('crypto');
 const express = require('express');
@@ -8,10 +9,16 @@ const morgan = require('morgan');
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const { WebSocketServer } = require('ws');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const { requireAuth } = require('./middleware/auth');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 const REGISTRATION_SECRET = process.env.REGISTRATION_SECRET;
+const JWT_SECRET = process.env.JWT_SECRET;
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 
 // Middleware
 app.use(helmet());
@@ -57,6 +64,39 @@ function initDatabase() {
             synced_at      INTEGER
         )
     `);
+
+    db.run(`
+        CREATE TABLE IF NOT EXISTS users (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            email         TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            role          TEXT NOT NULL DEFAULT 'viewer',
+            created_at    INTEGER NOT NULL
+        )
+    `, (err) => {
+        if (err) return console.error('[DB] Failed to create users table:', err);
+        seedAdminUser();
+    });
+}
+
+function seedAdminUser() {
+    if (!ADMIN_EMAIL || !ADMIN_PASSWORD) {
+        console.warn('[SEED] ADMIN_EMAIL or ADMIN_PASSWORD not set — skipping admin seed');
+        return;
+    }
+    db.get('SELECT id FROM users WHERE email = ?', [ADMIN_EMAIL], (err, row) => {
+        if (err) return console.error('[SEED] DB error:', err);
+        if (row) return console.log('[SEED] Admin user already exists, skipping');
+        const hash = bcrypt.hashSync(ADMIN_PASSWORD, 10);
+        db.run(
+            'INSERT INTO users (email, password_hash, role, created_at) VALUES (?, ?, ?, ?)',
+            [ADMIN_EMAIL, hash, 'admin', Date.now()],
+            (dbErr) => {
+                if (dbErr) console.error('[SEED] Failed to insert admin:', dbErr);
+                else console.log(`[SEED] Admin user created: ${ADMIN_EMAIL}`);
+            }
+        );
+    });
 }
 
 // WebSocket server
@@ -95,6 +135,34 @@ app.get('/', (_req, res) => {
         timestamp: new Date().toISOString(),
         ws_clients: wss.clients.size,
     });
+});
+
+// Login — returns JWT
+app.post('/api/auth/login', (req, res) => {
+    const { email, password } = req.body;
+    if (!email || !password) {
+        return res.status(400).json({ error: 'email and password are required' });
+    }
+    if (!JWT_SECRET) {
+        return res.status(500).json({ error: 'Server misconfiguration' });
+    }
+    db.get('SELECT * FROM users WHERE email = ?', [email], (err, user) => {
+        if (err) return res.status(500).json({ error: 'Internal error' });
+        if (!user || !bcrypt.compareSync(password, user.password_hash)) {
+            return res.status(401).json({ error: 'Invalid credentials' });
+        }
+        const token = jwt.sign(
+            { id: user.id, email: user.email, role: user.role },
+            JWT_SECRET,
+            { expiresIn: '8h' }
+        );
+        res.json({ token, user: { id: user.id, email: user.email, role: user.role } });
+    });
+});
+
+// Current user info
+app.get('/api/auth/me', requireAuth, (req, res) => {
+    res.json({ user: req.user });
 });
 
 // Register a new gateway and receive a unique token
@@ -230,7 +298,7 @@ app.post('/api/gateway/warning', (req, res) => {
 });
 
 // Get SOS history
-app.get('/api/alerts/sos', (req, res) => {
+app.get('/api/alerts/sos', requireAuth, (req, res) => {
     db.all(`SELECT * FROM sos_events ORDER BY timestamp DESC`, [], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json({ alerts: rows });
@@ -238,7 +306,7 @@ app.get('/api/alerts/sos', (req, res) => {
 });
 
 // Get registered gateways (for cloud dashboard)
-app.get('/api/gateways', (req, res) => {
+app.get('/api/gateways', requireAuth, (req, res) => {
     db.all(
         `SELECT gateway_id, device_id, registered_at, last_seen_at, warning FROM gateways ORDER BY registered_at DESC`,
         [],
@@ -250,7 +318,7 @@ app.get('/api/gateways', (req, res) => {
 });
 
 // Get single gateway status by ID
-app.get('/api/gateways/:gateway_id', (req, res) => {
+app.get('/api/gateways/:gateway_id', requireAuth, (req, res) => {
     db.get(
         `SELECT gateway_id, device_id, registered_at, last_seen_at, warning FROM gateways WHERE gateway_id = ?`,
         [req.params.gateway_id],

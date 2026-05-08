@@ -1,91 +1,52 @@
-// App.js
-import { useState, useEffect } from 'react';
-import { fetchAlerts } from './services/api';
-import SOSAlert from './components/SOSAlert';
-import Dashboard from './components/Dashboard';
-import Gateways from './components/Gateways';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import { useAlerts } from './hooks/useAlerts';
+import Header from './components/layout/Header';
+import ProtectedRoute from './components/auth/ProtectedRoute';
+import LoginPage from './pages/LoginPage';
+import DashboardPage from './pages/DashboardPage';
+import GatewaysPage from './pages/GatewaysPage';
 import './App.css';
 
-function App() {
-    const [alerts, setAlerts] = useState([]);
-    const [page, setPage] = useState('dashboard'); // 'dashboard' | 'gateways'
-
-    // Initial load of historical alerts
-    useEffect(() => {
-        fetchAlerts()
-            .then(data => setAlerts(data))
-            .catch(() => {});
-    }, []);
-
-    // WebSocket for real-time SOS events (with auto-reconnect)
-    useEffect(() => {
-        let ws;
-        let retryTimeout;
-        let destroyed = false;
-
-        function connect() {
-            if (destroyed) return;
-            clearTimeout(retryTimeout);
-            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
-
-            ws.onclose = () => {
-                if (!destroyed) retryTimeout = setTimeout(connect, 3000);
-            };
-            ws.onmessage = (e) => {
-                try {
-                    const msg = JSON.parse(e.data);
-                    if (msg.type === 'sos') {
-                        setAlerts(prev => [msg.event, ...prev]);
-                    }
-                } catch (err) {
-                    console.error('[WS] Failed to parse message:', err);
-                }
-            };
-        }
-
-        window.addEventListener('online', connect);
-        window.addEventListener('offline', () => ws?.close());
-
-        connect();
-        return () => {
-            destroyed = true;
-            clearTimeout(retryTimeout);
-            window.removeEventListener('online', connect);
-            ws?.close();
-        };
-    }, []);
+function AppRoutes() {
+    const { token } = useAuth();
+    const alerts = useAlerts(token);
 
     return (
         <div className="app">
-            <header className="app-header">
-                <h1>SOS IoT Dashboard</h1>
-                <nav className="app-nav">
-                    <button
-                        className={`nav-tab ${page === 'dashboard' ? 'nav-tab-active' : ''}`}
-                        onClick={() => setPage('dashboard')}
-                    >
-                        Dashboard
-                    </button>
-                    <button
-                        className={`nav-tab ${page === 'gateways' ? 'nav-tab-active' : ''}`}
-                        onClick={() => setPage('gateways')}
-                    >
-                        Gateways
-                    </button>
-                </nav>
-            </header>
+            {token && <Header />}
             <main>
-                {page === 'dashboard' && (
-                    <>
-                        <SOSAlert alerts={alerts} />
-                        <Dashboard alerts={alerts} />
-                    </>
-                )}
-                {page === 'gateways' && <Gateways />}
+                <Routes>
+                    <Route path="/login" element={<LoginPage />} />
+                    <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                    <Route
+                        path="/dashboard"
+                        element={
+                            <ProtectedRoute>
+                                <DashboardPage alerts={alerts} />
+                            </ProtectedRoute>
+                        }
+                    />
+                    <Route
+                        path="/gateways"
+                        element={
+                            <ProtectedRoute>
+                                <GatewaysPage />
+                            </ProtectedRoute>
+                        }
+                    />
+                </Routes>
             </main>
         </div>
     );
 }
 
-export default App;
+export default function App() {
+    return (
+        <BrowserRouter>
+            <AuthProvider>
+                <AppRoutes />
+            </AuthProvider>
+        </BrowserRouter>
+    );
+}
