@@ -6,7 +6,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
-const sqlite3 = require('sqlite3').verbose();
+const Database = require('better-sqlite3');
 const path = require('path');
 const { WebSocketServer } = require('ws');
 const bcrypt = require('bcryptjs');
@@ -27,19 +27,15 @@ app.use(express.json());
 app.use(morgan('combined'));
 
 // Database setup
-const dbPath = path.join(__dirname, '..', 'data', 'gateway_data.db');
-const db = new sqlite3.Database(dbPath, (err) => {
-    if (err) {
-        console.error('Error opening database:', err);
-    } else {
-        console.log('Connected to SQLite database');
-        initDatabase();
-    }
-});
+const dbDir = path.join(__dirname, '..', 'data');
+require('fs').mkdirSync(dbDir, { recursive: true });
+const dbPath = path.join(dbDir, 'gateway_data.db');
+const db = new Database(dbPath);
+console.log('Connected to SQLite database');
+initDatabase();
 
 function initDatabase() {
-    // Registered gateways — each gets its own unique token after registration
-    db.run(`
+    db.exec(`
         CREATE TABLE IF NOT EXISTS gateways (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
             gateway_id    TEXT UNIQUE NOT NULL,
@@ -51,10 +47,10 @@ function initDatabase() {
         )
     `);
 
-    // Migration for existing databases: add warning column if it doesn't exist yet
-    db.run(`ALTER TABLE gateways ADD COLUMN warning TEXT`, () => {});
+    // Migration: add warning column if missing
+    try { db.exec(`ALTER TABLE gateways ADD COLUMN warning TEXT`); } catch (_) {}
 
-    db.run(`
+    db.exec(`
         CREATE TABLE IF NOT EXISTS sos_events (
             id             INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp      INTEGER NOT NULL,
@@ -65,7 +61,7 @@ function initDatabase() {
         )
     `);
 
-    db.run(`
+    db.exec(`
         CREATE TABLE IF NOT EXISTS users (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
             email         TEXT UNIQUE NOT NULL,
@@ -73,10 +69,9 @@ function initDatabase() {
             role          TEXT NOT NULL DEFAULT 'viewer',
             created_at    INTEGER NOT NULL
         )
-    `, (err) => {
-        if (err) return console.error('[DB] Failed to create users table:', err);
-        seedAdminUser();
-    });
+    `);
+
+    seedAdminUser();
 }
 
 function seedAdminUser() {
@@ -84,22 +79,20 @@ function seedAdminUser() {
         console.warn('[SEED] ADMIN_EMAIL or ADMIN_PASSWORD not set — skipping admin seed');
         return;
     }
-    db.get('SELECT id FROM users WHERE email = ?', [ADMIN_EMAIL], (err, row) => {
-        if (err) return console.error('[SEED] DB error:', err);
-        if (row) return console.log('[SEED] Admin user already exists, skipping');
-        const hash = bcrypt.hashSync(ADMIN_PASSWORD, 10);
-        db.run(
-            'INSERT INTO users (email, password_hash, role, created_at) VALUES (?, ?, ?, ?)',
-            [ADMIN_EMAIL, hash, 'admin', Date.now()],
-            (dbErr) => {
-                if (dbErr) console.error('[SEED] Failed to insert admin:', dbErr);
-                else console.log(`[SEED] Admin user created: ${ADMIN_EMAIL}`);
-            }
-        );
-    });
+    const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(ADMIN_EMAIL);
+    if (existing) {
+        console.log('[SEED] Admin user already exists, skipping');
+        return;
+    }
+    const hash = bcrypt.hashSync(ADMIN_PASSWORD, 10);
+    db.prepare('INSERT INTO users (email, password_hash, role, created_at) VALUES (?, ?, ?, ?)')
+      .run(ADMIN_EMAIL, hash, 'admin', Date.now());
+    console.log(`[SEED] Admin user created: ${ADMIN_EMAIL}`);
 }
 
+// ---------------------------------------------------------------------------
 // WebSocket server
+// ---------------------------------------------------------------------------
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 
@@ -113,14 +106,6 @@ function broadcast(data) {
     wss.clients.forEach(client => {
         if (client.readyState === 1) client.send(msg);
     });
-}
-
-// ---------------------------------------------------------------------------
-// Helper — validate gateway token against DB, call cb(err, gateway)
-// ---------------------------------------------------------------------------
-function validateToken(token, cb) {
-    if (!token) return cb(null, null);
-    db.get('SELECT * FROM gateways WHERE token = ?', [token], cb);
 }
 
 // ---------------------------------------------------------------------------
@@ -146,8 +131,8 @@ app.post('/api/auth/login', (req, res) => {
     if (!JWT_SECRET) {
         return res.status(500).json({ error: 'Server misconfiguration' });
     }
-    db.get('SELECT * FROM users WHERE email = ?', [email], (err, user) => {
-        if (err) return res.status(500).json({ error: 'Internal error' });
+    try {
+        const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
         if (!user || !bcrypt.compareSync(password, user.password_hash)) {
             return res.status(401).json({ error: 'Invalid credentials' });
         }
@@ -157,7 +142,10 @@ app.post('/api/auth/login', (req, res) => {
             { expiresIn: '8h' }
         );
         res.json({ token, user: { id: user.id, email: user.email, role: user.role } });
-    });
+    } catch (err) {
+        console.error('[LOGIN] Error:', err);
+        res.status(500).json({ error: 'Internal error' });
+    }
 });
 
 // Current user info
@@ -166,168 +154,127 @@ app.get('/api/auth/me', requireAuth, (req, res) => {
 });
 
 // Register a new gateway and receive a unique token
-// Body: { gateway_id, device_id, secret }
 app.post('/api/gateway/register', (req, res) => {
     if (!REGISTRATION_SECRET) {
         return res.status(503).json({ error: 'Registration not configured on server' });
     }
-
     const { gateway_id, device_id, secret } = req.body;
-
     if (!gateway_id || !secret) {
         return res.status(400).json({ error: 'gateway_id and secret are required' });
     }
-
     if (secret !== REGISTRATION_SECRET) {
         console.warn(`[REGISTER] Bad secret from gateway_id=${gateway_id}`);
         return res.status(401).json({ error: 'Invalid registration secret' });
     }
-
     const token = crypto.randomBytes(32).toString('hex');
-
-    db.run(
-        `INSERT OR REPLACE INTO gateways (gateway_id, device_id, token, registered_at)
-         VALUES (?, ?, ?, ?)`,
-        [gateway_id, device_id || null, token, Date.now()],
-        function (err) {
-            if (err) {
-                console.error('[REGISTER] DB error:', err);
-                return res.status(500).json({ error: 'Failed to register gateway' });
-            }
-            console.log(`[REGISTER] Gateway registered: id=${gateway_id} device=${device_id}`);
-            res.status(201).json({ token });
-        }
-    );
+    try {
+        db.prepare(
+            `INSERT OR REPLACE INTO gateways (gateway_id, device_id, token, registered_at) VALUES (?, ?, ?, ?)`
+        ).run(gateway_id, device_id || null, token, Date.now());
+        console.log(`[REGISTER] Gateway registered: id=${gateway_id} device=${device_id}`);
+        res.status(201).json({ token });
+    } catch (err) {
+        console.error('[REGISTER] DB error:', err);
+        res.status(500).json({ error: 'Failed to register gateway' });
+    }
 });
 
 // Receive SOS event from Gateway
 app.post('/api/gateway/data', (req, res) => {
     const incomingToken = req.headers['x-gateway-token'];
+    if (!incomingToken) return res.status(401).json({ error: 'Unauthorized — gateway not registered' });
 
-    validateToken(incomingToken, (err, gateway) => {
-        if (err) {
-            console.error('[AUTH] DB error:', err);
-            return res.status(500).json({ error: 'Internal error' });
-        }
-        if (!gateway) {
-            return res.status(401).json({ error: 'Unauthorized — gateway not registered' });
-        }
+    try {
+        const gateway = db.prepare('SELECT * FROM gateways WHERE token = ?').get(incomingToken);
+        if (!gateway) return res.status(401).json({ error: 'Unauthorized — gateway not registered' });
 
-        // Update last_seen_at
-        db.run('UPDATE gateways SET last_seen_at = ? WHERE id = ?', [Date.now(), gateway.id]);
+        db.prepare('UPDATE gateways SET last_seen_at = ? WHERE id = ?').run(Date.now(), gateway.id);
 
         const { timestamp, device_id, button_pressed, gateway_id, sos_alert } = req.body;
+        if (!sos_alert) return res.status(200).json({ success: true, message: 'Non-SOS data ignored' });
 
-        if (!sos_alert) {
-            return res.status(200).json({ success: true, message: 'Non-SOS data ignored' });
-        }
+        const result = db.prepare(
+            `INSERT INTO sos_events (timestamp, device_id, button_pressed, gateway_id, synced_at) VALUES (?, ?, ?, ?, ?)`
+        ).run(timestamp, device_id, button_pressed, gateway_id, Date.now());
 
-        const sql = `
-            INSERT INTO sos_events (timestamp, device_id, button_pressed, gateway_id, synced_at)
-            VALUES (?, ?, ?, ?, ?)
-        `;
-
-        db.run(sql, [timestamp, device_id, button_pressed, gateway_id, Date.now()], function (err) {
-            if (err) {
-                console.error('Database error:', err);
-                return res.status(500).json({ error: 'Failed to store data' });
-            }
-
-            const event = { id: this.lastID, timestamp, device_id, button_pressed, gateway_id };
-
-            console.log('🚨 SOS ALERT from device:', device_id, '— clicks:', button_pressed);
-            broadcast({ type: 'sos', event });
-
-            res.status(201).json({ success: true, id: this.lastID });
-        });
-    });
+        const event = { id: result.lastInsertRowid, timestamp, device_id, button_pressed, gateway_id };
+        console.log('🚨 SOS ALERT from device:', device_id, '— clicks:', button_pressed);
+        broadcast({ type: 'sos', event });
+        res.status(201).json({ success: true, id: result.lastInsertRowid });
+    } catch (err) {
+        console.error('[DATA] DB error:', err);
+        res.status(500).json({ error: 'Failed to store data' });
+    }
 });
 
 // Heartbeat — gateway confirms it is alive
 app.post('/api/gateway/ping', (req, res) => {
     const incomingToken = req.headers['x-gateway-token'];
-
-    validateToken(incomingToken, (err, gateway) => {
-        if (err) {
-            console.error('[PING] DB error:', err);
-            return res.status(500).json({ error: 'Internal error' });
-        }
-        if (!gateway) {
-            return res.status(401).json({ error: 'Unauthorized — gateway not registered' });
-        }
-
-        db.run('UPDATE gateways SET last_seen_at = ? WHERE id = ?', [Date.now(), gateway.id]);
+    if (!incomingToken) return res.status(401).json({ error: 'Unauthorized — gateway not registered' });
+    try {
+        const gateway = db.prepare('SELECT * FROM gateways WHERE token = ?').get(incomingToken);
+        if (!gateway) return res.status(401).json({ error: 'Unauthorized — gateway not registered' });
+        db.prepare('UPDATE gateways SET last_seen_at = ? WHERE id = ?').run(Date.now(), gateway.id);
         console.log(`[PING] Heartbeat from gateway: ${gateway.gateway_id}`);
         res.json({ ok: true, server_time: Date.now() });
-    });
+    } catch (err) {
+        console.error('[PING] DB error:', err);
+        res.status(500).json({ error: 'Internal error' });
+    }
 });
 
 // Warning — gateway reports a problem (message) or clears it (message: null)
 app.post('/api/gateway/warning', (req, res) => {
     const incomingToken = req.headers['x-gateway-token'];
-
-    validateToken(incomingToken, (err, gateway) => {
-        if (err) {
-            console.error('[WARNING] DB error:', err);
-            return res.status(500).json({ error: 'Internal error' });
-        }
-        if (!gateway) {
-            return res.status(401).json({ error: 'Unauthorized — gateway not registered' });
-        }
-
-        const { message } = req.body;
-        const warning = message || null;
-
-        db.run(
-            'UPDATE gateways SET last_seen_at = ?, warning = ? WHERE id = ?',
-            [Date.now(), warning, gateway.id],
-            (dbErr) => {
-                if (dbErr) {
-                    console.error('[WARNING] DB error:', dbErr);
-                    return res.status(500).json({ error: 'Internal error' });
-                }
-                if (warning) {
-                    console.warn(`[WARNING] Gateway ${gateway.gateway_id}: ${warning}`);
-                } else {
-                    console.log(`[WARNING] Gateway ${gateway.gateway_id}: warning cleared`);
-                }
-                res.json({ ok: true });
-            }
-        );
-    });
+    if (!incomingToken) return res.status(401).json({ error: 'Unauthorized — gateway not registered' });
+    try {
+        const gateway = db.prepare('SELECT * FROM gateways WHERE token = ?').get(incomingToken);
+        if (!gateway) return res.status(401).json({ error: 'Unauthorized — gateway not registered' });
+        const warning = req.body.message || null;
+        db.prepare('UPDATE gateways SET last_seen_at = ?, warning = ? WHERE id = ?')
+          .run(Date.now(), warning, gateway.id);
+        if (warning) console.warn(`[WARNING] Gateway ${gateway.gateway_id}: ${warning}`);
+        else console.log(`[WARNING] Gateway ${gateway.gateway_id}: warning cleared`);
+        res.json({ ok: true });
+    } catch (err) {
+        console.error('[WARNING] DB error:', err);
+        res.status(500).json({ error: 'Internal error' });
+    }
 });
 
 // Get SOS history
 app.get('/api/alerts/sos', requireAuth, (req, res) => {
-    db.all(`SELECT * FROM sos_events ORDER BY timestamp DESC`, [], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
+    try {
+        const rows = db.prepare(`SELECT * FROM sos_events ORDER BY timestamp DESC`).all();
         res.json({ alerts: rows });
-    });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
-// Get registered gateways (for cloud dashboard)
+// Get registered gateways
 app.get('/api/gateways', requireAuth, (req, res) => {
-    db.all(
-        `SELECT gateway_id, device_id, registered_at, last_seen_at, warning FROM gateways ORDER BY registered_at DESC`,
-        [],
-        (err, rows) => {
-            if (err) return res.status(500).json({ error: err.message });
-            res.json({ gateways: rows });
-        }
-    );
+    try {
+        const rows = db.prepare(
+            `SELECT gateway_id, device_id, registered_at, last_seen_at, warning FROM gateways ORDER BY registered_at DESC`
+        ).all();
+        res.json({ gateways: rows });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // Get single gateway status by ID
 app.get('/api/gateways/:gateway_id', requireAuth, (req, res) => {
-    db.get(
-        `SELECT gateway_id, device_id, registered_at, last_seen_at, warning FROM gateways WHERE gateway_id = ?`,
-        [req.params.gateway_id],
-        (err, row) => {
-            if (err) return res.status(500).json({ error: err.message });
-            if (!row) return res.status(404).json({ error: 'Gateway not found' });
-            res.json({ gateway: row });
-        }
-    );
+    try {
+        const row = db.prepare(
+            `SELECT gateway_id, device_id, registered_at, last_seen_at, warning FROM gateways WHERE gateway_id = ?`
+        ).get(req.params.gateway_id);
+        if (!row) return res.status(404).json({ error: 'Gateway not found' });
+        res.json({ gateway: row });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // Start
@@ -339,9 +286,7 @@ server.listen(PORT, () => {
 // Graceful shutdown
 process.on('SIGINT', () => {
     wss.close();
-    db.close((err) => {
-        if (err) console.error(err.message);
-        console.log('Database connection closed.');
-        process.exit(0);
-    });
+    db.close();
+    console.log('Database connection closed.');
+    process.exit(0);
 });
