@@ -21,6 +21,12 @@ export default function Header() {
                     Dashboard
                 </NavLink>
                 <NavLink
+                    to="/devices"
+                    className={({ isActive }) => `nav-tab${isActive ? ' nav-tab-active' : ''}`}
+                >
+                    Devices
+                </NavLink>
+                <NavLink
                     to="/gateways"
                     className={({ isActive }) => `nav-tab${isActive ? ' nav-tab-active' : ''}`}
                 >

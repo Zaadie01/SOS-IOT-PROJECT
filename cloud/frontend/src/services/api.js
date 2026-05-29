@@ -18,9 +18,14 @@ async function apiFetch(path, options = {}) {
         window.location.href = '/login';
         throw new Error('Unauthorized');
     }
-    if (!res.ok) throw new Error(`API error ${res.status}`);
+    if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error(json.error || `API error ${res.status}`);
+    }
     return res.json();
 }
+
+// ── Auth ──────────────────────────────────────────────────────────────────────
 
 export async function login(email, password) {
     const res = await fetch(`${BASE_URL}/auth/login`, {
@@ -34,6 +39,70 @@ export async function login(email, password) {
     }
     return res.json();
 }
+
+export async function register(email, password, name, invite_token) {
+    const res = await fetch(`${BASE_URL}/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, name, invite_token }),
+    });
+    if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error(json.error || 'Registration failed');
+    }
+    return res.json();
+}
+
+export async function fetchInvite(token) {
+    const res = await fetch(`${BASE_URL}/auth/invites/${token}`);
+    if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error(json.error || 'Invalid invite');
+    }
+    return res.json();
+}
+
+export async function createInvite(email) {
+    return apiFetch('/auth/invites', {
+        method: 'POST',
+        body: JSON.stringify({ email }),
+    });
+}
+
+// ── Devices ───────────────────────────────────────────────────────────────────
+
+export async function fetchDevices() {
+    const json = await apiFetch('/devices');
+    return json.devices;
+}
+
+export async function createDevice(name) {
+    return apiFetch('/devices', {
+        method: 'POST',
+        body: JSON.stringify({ name }),
+    });
+}
+
+export async function renameDevice(id, name) {
+    return apiFetch(`/devices/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name }),
+    });
+}
+
+export async function deleteDevice(id) {
+    return apiFetch(`/devices/${id}`, { method: 'DELETE' });
+}
+
+export async function revokeDevice(id) {
+    return apiFetch(`/devices/${id}/revoke`, { method: 'POST' });
+}
+
+export async function regenDeviceCode(id) {
+    return apiFetch(`/devices/${id}/regen-code`, { method: 'POST' });
+}
+
+// ── Alerts & Gateways ─────────────────────────────────────────────────────────
 
 export async function fetchAlerts() {
     const json = await apiFetch('/alerts/sos');

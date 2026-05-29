@@ -1,56 +1,114 @@
-// server.js
 require('dotenv').config();
 const http = require('http');
-const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
+const session = require('express-session');
+const passport = require('passport');
 const Database = require('better-sqlite3');
-const path = require('path');
 const { WebSocketServer } = require('ws');
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-const { requireAuth } = require('./middleware/auth');
 
+const initPassport = require('./auth/passport');
+const authRoutes = require('./routes/authRoutes');
+const deviceRoutes = require('./routes/deviceRoutes');
+const gatewayRoutes = require('./routes/gatewayRoutes');
+const alertRoutes = require('./routes/alertRoutes');
+
+// ── Database ──────────────────────────────────────────────────────────────────
+const dbDir = path.join(__dirname, '..', 'data');
+fs.mkdirSync(dbDir, { recursive: true });
+const db = new Database(path.join(dbDir, 'gateway_data.db'));
+console.log('Connected to SQLite database');
+initDatabase(db);
+
+// ── Passport ──────────────────────────────────────────────────────────────────
+initPassport(db);
+
+// ── Express ───────────────────────────────────────────────────────────────────
 const app = express();
-const PORT = process.env.PORT || 3001;
-const REGISTRATION_SECRET = process.env.REGISTRATION_SECRET;
-const JWT_SECRET = process.env.JWT_SECRET;
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL;
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 
-// Middleware
 app.use(helmet());
-app.use(cors());
+app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 app.use(morgan('combined'));
 
-// Database setup
-const dbDir = path.join(__dirname, '..', 'data');
-require('fs').mkdirSync(dbDir, { recursive: true });
-const dbPath = path.join(dbDir, 'gateway_data.db');
-const db = new Database(dbPath);
-console.log('Connected to SQLite database');
-initDatabase();
+// Sessions are only needed for the Google OAuth redirect dance (~10 s lifetime)
+app.use(session({
+    secret: process.env.SESSION_SECRET || process.env.JWT_SECRET || 'dev-session-secret',
+    resave: false,
+    saveUninitialized: false,
+    cookie: { secure: false, maxAge: 15 * 60 * 1000 },
+}));
 
-function initDatabase() {
-    db.exec(`
-        CREATE TABLE IF NOT EXISTS gateways (
+app.use(passport.initialize());
+app.use(passport.session());
+
+// ── WebSocket ─────────────────────────────────────────────────────────────────
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server, path: '/ws' });
+
+wss.on('connection', ws => {
+    console.log('[WS] Client connected, total:', wss.clients.size);
+    ws.on('close', () => console.log('[WS] Client disconnected, total:', wss.clients.size));
+});
+
+function broadcast(data) {
+    const msg = JSON.stringify(data);
+    wss.clients.forEach(c => { if (c.readyState === 1) c.send(msg); });
+}
+
+// ── Routes ────────────────────────────────────────────────────────────────────
+app.get('/', (_req, res) => res.json({
+    status: 'OK',
+    message: 'SOS Gateway Backend API',
+    timestamp: new Date().toISOString(),
+    ws_clients: wss.clients.size,
+}));
+
+app.use('/api/auth', authRoutes(db));
+app.use('/api/devices', deviceRoutes(db));
+app.use('/api', gatewayRoutes(db, broadcast));   // /api/gateway/* and /api/gateways
+app.use('/api/alerts', alertRoutes(db));
+
+// ── Start ─────────────────────────────────────────────────────────────────────
+const PORT = process.env.PORT || 3001;
+server.listen(PORT, () => {
+    console.log(`🚀 Server running on http://localhost:${PORT}`);
+    console.log(`🔌 WebSocket on ws://localhost:${PORT}/ws`);
+});
+
+process.on('SIGINT', () => {
+    wss.close();
+    db.close();
+    console.log('Database connection closed.');
+    process.exit(0);
+});
+
+// ── Database init + migrations ────────────────────────────────────────────────
+function initDatabase(database) {
+    database.exec(`
+        CREATE TABLE IF NOT EXISTS users (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
-            gateway_id    TEXT UNIQUE NOT NULL,
-            device_id     TEXT,
-            token         TEXT UNIQUE NOT NULL,
-            registered_at INTEGER NOT NULL,
-            last_seen_at  INTEGER,
-            warning       TEXT
+            email         TEXT UNIQUE,
+            password_hash TEXT NOT NULL DEFAULT '',
+            role          TEXT NOT NULL DEFAULT 'viewer',
+            display_name  TEXT,
+            google_id     TEXT UNIQUE,
+            created_at    INTEGER NOT NULL
         )
     `);
+    // Migrations for existing installs
+    try { database.exec(`ALTER TABLE users ADD COLUMN display_name TEXT`); } catch (_) {}
+    try { database.exec(`ALTER TABLE users ADD COLUMN google_id TEXT`); } catch (_) {}
 
-    // Migration: add warning column if missing
-    try { db.exec(`ALTER TABLE gateways ADD COLUMN warning TEXT`); } catch (_) {}
+    // Gateways — check if schema needs upgrading (token was NOT NULL in old version)
+    migrateGatewaysTable(database);
 
-    db.exec(`
+    database.exec(`
         CREATE TABLE IF NOT EXISTS sos_events (
             id             INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp      INTEGER NOT NULL,
@@ -61,232 +119,82 @@ function initDatabase() {
         )
     `);
 
-    db.exec(`
-        CREATE TABLE IF NOT EXISTS users (
-            id            INTEGER PRIMARY KEY AUTOINCREMENT,
-            email         TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            role          TEXT NOT NULL DEFAULT 'viewer',
-            created_at    INTEGER NOT NULL
+    database.exec(`
+        CREATE TABLE IF NOT EXISTS invites (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            token      TEXT UNIQUE NOT NULL,
+            created_by INTEGER NOT NULL,
+            email      TEXT,
+            expires_at INTEGER NOT NULL,
+            used_at    INTEGER,
+            used_by    INTEGER
         )
     `);
 
-    seedAdminUser();
+    seedAdminUser(database);
 }
 
-function seedAdminUser() {
+function migrateGatewaysTable(database) {
+    const cols = database.prepare('PRAGMA table_info(gateways)').all();
+
+    if (cols.length === 0) {
+        // Fresh install — create with the correct schema right away
+        database.exec(`
+            CREATE TABLE gateways (
+                id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                gateway_id          TEXT UNIQUE,
+                device_id           TEXT,
+                name                TEXT,
+                owner_id            INTEGER,
+                token               TEXT UNIQUE,
+                registration_code   TEXT UNIQUE,
+                reg_code_expires_at INTEGER,
+                registered_at       INTEGER NOT NULL DEFAULT 0,
+                last_seen_at        INTEGER,
+                warning             TEXT
+            )
+        `);
+        return;
+    }
+
+    const hasOwner = cols.some(c => c.name === 'owner_id');
+    const tokenNotNull = cols.find(c => c.name === 'token')?.notnull === 1;
+
+    if (hasOwner && !tokenNotNull) return; // already up to date
+
+    console.log('[MIGRATION] Upgrading gateways table...');
+    database.exec(`
+        CREATE TABLE gateways_v2 (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            gateway_id          TEXT UNIQUE,
+            device_id           TEXT,
+            name                TEXT,
+            owner_id            INTEGER,
+            token               TEXT UNIQUE,
+            registration_code   TEXT UNIQUE,
+            reg_code_expires_at INTEGER,
+            registered_at       INTEGER NOT NULL DEFAULT 0,
+            last_seen_at        INTEGER,
+            warning             TEXT
+        );
+        INSERT INTO gateways_v2 (id, gateway_id, device_id, token, registered_at, last_seen_at, warning)
+            SELECT id, gateway_id, device_id, token, registered_at, last_seen_at, warning
+            FROM gateways;
+        DROP TABLE gateways;
+        ALTER TABLE gateways_v2 RENAME TO gateways;
+    `);
+    console.log('[MIGRATION] gateways table upgraded');
+}
+
+function seedAdminUser(database) {
+    const { ADMIN_EMAIL, ADMIN_PASSWORD } = process.env;
     if (!ADMIN_EMAIL || !ADMIN_PASSWORD) {
         console.warn('[SEED] ADMIN_EMAIL or ADMIN_PASSWORD not set — skipping admin seed');
         return;
     }
-    const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(ADMIN_EMAIL);
-    if (existing) {
-        console.log('[SEED] Admin user already exists, skipping');
-        return;
-    }
-    const hash = bcrypt.hashSync(ADMIN_PASSWORD, 10);
-    db.prepare('INSERT INTO users (email, password_hash, role, created_at) VALUES (?, ?, ?, ?)')
-      .run(ADMIN_EMAIL, hash, 'admin', Date.now());
+    if (database.prepare('SELECT id FROM users WHERE email = ?').get(ADMIN_EMAIL)) return;
+    database.prepare(
+        `INSERT INTO users (email, password_hash, role, created_at) VALUES (?, ?, 'admin', ?)`
+    ).run(ADMIN_EMAIL, bcrypt.hashSync(ADMIN_PASSWORD, 10), Date.now());
     console.log(`[SEED] Admin user created: ${ADMIN_EMAIL}`);
 }
-
-// ---------------------------------------------------------------------------
-// WebSocket server
-// ---------------------------------------------------------------------------
-const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: '/ws' });
-
-wss.on('connection', (ws) => {
-    console.log('[WS] Client connected, total:', wss.clients.size);
-    ws.on('close', () => console.log('[WS] Client disconnected, total:', wss.clients.size));
-});
-
-function broadcast(data) {
-    const msg = JSON.stringify(data);
-    wss.clients.forEach(client => {
-        if (client.readyState === 1) client.send(msg);
-    });
-}
-
-// ---------------------------------------------------------------------------
-// Routes
-// ---------------------------------------------------------------------------
-
-// Health check
-app.get('/', (_req, res) => {
-    res.json({
-        status: 'OK',
-        message: 'SOS Gateway Backend API',
-        timestamp: new Date().toISOString(),
-        ws_clients: wss.clients.size,
-    });
-});
-
-// Login — returns JWT
-app.post('/api/auth/login', (req, res) => {
-    const { email, password } = req.body;
-    if (!email || !password) {
-        return res.status(400).json({ error: 'email and password are required' });
-    }
-    if (!JWT_SECRET) {
-        return res.status(500).json({ error: 'Server misconfiguration' });
-    }
-    try {
-        const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
-        if (!user || !bcrypt.compareSync(password, user.password_hash)) {
-            return res.status(401).json({ error: 'Invalid credentials' });
-        }
-        const token = jwt.sign(
-            { id: user.id, email: user.email, role: user.role },
-            JWT_SECRET,
-            { expiresIn: '8h' }
-        );
-        res.json({ token, user: { id: user.id, email: user.email, role: user.role } });
-    } catch (err) {
-        console.error('[LOGIN] Error:', err);
-        res.status(500).json({ error: 'Internal error' });
-    }
-});
-
-// Current user info
-app.get('/api/auth/me', requireAuth, (req, res) => {
-    res.json({ user: req.user });
-});
-
-// Register a new gateway and receive a unique token
-app.post('/api/gateway/register', (req, res) => {
-    if (!REGISTRATION_SECRET) {
-        return res.status(503).json({ error: 'Registration not configured on server' });
-    }
-    const { gateway_id, device_id, secret } = req.body;
-    if (!gateway_id || !secret) {
-        return res.status(400).json({ error: 'gateway_id and secret are required' });
-    }
-    if (secret !== REGISTRATION_SECRET) {
-        console.warn(`[REGISTER] Bad secret from gateway_id=${gateway_id}`);
-        return res.status(401).json({ error: 'Invalid registration secret' });
-    }
-    const token = crypto.randomBytes(32).toString('hex');
-    try {
-        db.prepare(
-            `INSERT OR REPLACE INTO gateways (gateway_id, device_id, token, registered_at) VALUES (?, ?, ?, ?)`
-        ).run(gateway_id, device_id || null, token, Date.now());
-        console.log(`[REGISTER] Gateway registered: id=${gateway_id} device=${device_id}`);
-        res.status(201).json({ token });
-    } catch (err) {
-        console.error('[REGISTER] DB error:', err);
-        res.status(500).json({ error: 'Failed to register gateway' });
-    }
-});
-
-// Receive SOS event from Gateway
-app.post('/api/gateway/data', (req, res) => {
-    const incomingToken = req.headers['x-gateway-token'];
-    if (!incomingToken) return res.status(401).json({ error: 'Unauthorized — gateway not registered' });
-
-    try {
-        const gateway = db.prepare('SELECT * FROM gateways WHERE token = ?').get(incomingToken);
-        if (!gateway) return res.status(401).json({ error: 'Unauthorized — gateway not registered' });
-
-        db.prepare('UPDATE gateways SET last_seen_at = ? WHERE id = ?').run(Date.now(), gateway.id);
-
-        const { timestamp, device_id, button_pressed, gateway_id, sos_alert } = req.body;
-        if (!sos_alert) return res.status(200).json({ success: true, message: 'Non-SOS data ignored' });
-
-        const result = db.prepare(
-            `INSERT INTO sos_events (timestamp, device_id, button_pressed, gateway_id, synced_at) VALUES (?, ?, ?, ?, ?)`
-        ).run(timestamp, device_id, button_pressed, gateway_id, Date.now());
-
-        const event = { id: result.lastInsertRowid, timestamp, device_id, button_pressed, gateway_id };
-        console.log('🚨 SOS ALERT from device:', device_id, '— clicks:', button_pressed);
-        broadcast({ type: 'sos', event });
-        res.status(201).json({ success: true, id: result.lastInsertRowid });
-    } catch (err) {
-        console.error('[DATA] DB error:', err);
-        res.status(500).json({ error: 'Failed to store data' });
-    }
-});
-
-// Heartbeat — gateway confirms it is alive
-app.post('/api/gateway/ping', (req, res) => {
-    const incomingToken = req.headers['x-gateway-token'];
-    if (!incomingToken) return res.status(401).json({ error: 'Unauthorized — gateway not registered' });
-    try {
-        const gateway = db.prepare('SELECT * FROM gateways WHERE token = ?').get(incomingToken);
-        if (!gateway) return res.status(401).json({ error: 'Unauthorized — gateway not registered' });
-        db.prepare('UPDATE gateways SET last_seen_at = ? WHERE id = ?').run(Date.now(), gateway.id);
-        console.log(`[PING] Heartbeat from gateway: ${gateway.gateway_id}`);
-        res.json({ ok: true, server_time: Date.now() });
-    } catch (err) {
-        console.error('[PING] DB error:', err);
-        res.status(500).json({ error: 'Internal error' });
-    }
-});
-
-// Warning — gateway reports a problem (message) or clears it (message: null)
-app.post('/api/gateway/warning', (req, res) => {
-    const incomingToken = req.headers['x-gateway-token'];
-    if (!incomingToken) return res.status(401).json({ error: 'Unauthorized — gateway not registered' });
-    try {
-        const gateway = db.prepare('SELECT * FROM gateways WHERE token = ?').get(incomingToken);
-        if (!gateway) return res.status(401).json({ error: 'Unauthorized — gateway not registered' });
-        const warning = req.body.message || null;
-        db.prepare('UPDATE gateways SET last_seen_at = ?, warning = ? WHERE id = ?')
-          .run(Date.now(), warning, gateway.id);
-        if (warning) console.warn(`[WARNING] Gateway ${gateway.gateway_id}: ${warning}`);
-        else console.log(`[WARNING] Gateway ${gateway.gateway_id}: warning cleared`);
-        res.json({ ok: true });
-    } catch (err) {
-        console.error('[WARNING] DB error:', err);
-        res.status(500).json({ error: 'Internal error' });
-    }
-});
-
-// Get SOS history
-app.get('/api/alerts/sos', requireAuth, (req, res) => {
-    try {
-        const rows = db.prepare(`SELECT * FROM sos_events ORDER BY timestamp DESC`).all();
-        res.json({ alerts: rows });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// Get registered gateways
-app.get('/api/gateways', requireAuth, (req, res) => {
-    try {
-        const rows = db.prepare(
-            `SELECT gateway_id, device_id, registered_at, last_seen_at, warning FROM gateways ORDER BY registered_at DESC`
-        ).all();
-        res.json({ gateways: rows });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// Get single gateway status by ID
-app.get('/api/gateways/:gateway_id', requireAuth, (req, res) => {
-    try {
-        const row = db.prepare(
-            `SELECT gateway_id, device_id, registered_at, last_seen_at, warning FROM gateways WHERE gateway_id = ?`
-        ).get(req.params.gateway_id);
-        if (!row) return res.status(404).json({ error: 'Gateway not found' });
-        res.json({ gateway: row });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// Start
-server.listen(PORT, () => {
-    console.log(`🚀 Server running on http://localhost:${PORT}`);
-    console.log(`🔌 WebSocket on ws://localhost:${PORT}/ws`);
-});
-
-// Graceful shutdown
-process.on('SIGINT', () => {
-    wss.close();
-    db.close();
-    console.log('Database connection closed.');
-    process.exit(0);
-});

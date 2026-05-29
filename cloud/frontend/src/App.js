@@ -4,8 +4,10 @@ import { useAlerts } from './hooks/useAlerts';
 import Header from './components/layout/Header';
 import ProtectedRoute from './components/auth/ProtectedRoute';
 import LoginPage from './pages/LoginPage';
+import RegisterPage from './pages/RegisterPage';
 import DashboardPage from './pages/DashboardPage';
 import GatewaysPage from './pages/GatewaysPage';
+import DevicesPage from './pages/DevicesPage';
 import './App.css';
 
 function AppRoutes() {
@@ -18,12 +20,21 @@ function AppRoutes() {
             <main>
                 <Routes>
                     <Route path="/login" element={<LoginPage />} />
+                    <Route path="/register" element={<RegisterPage />} />
                     <Route path="/" element={<Navigate to="/dashboard" replace />} />
                     <Route
                         path="/dashboard"
                         element={
                             <ProtectedRoute>
                                 <DashboardPage alerts={alerts} />
+                            </ProtectedRoute>
+                        }
+                    />
+                    <Route
+                        path="/devices"
+                        element={
+                            <ProtectedRoute>
+                                <DevicesPage />
                             </ProtectedRoute>
                         }
                     />

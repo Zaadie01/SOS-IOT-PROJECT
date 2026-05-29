@@ -1,3 +1,5 @@
+name: sos-iot
+
 services:
   caddy:
     image: caddy:2-alpine
@@ -15,9 +17,13 @@ services:
     restart: unless-stopped
 
   backend:
+    # build: section kept for local `docker compose build` (dev only)
     build:
       context: ./backend
       dockerfile: Dockerfile
+    # On the server this resolves to ghcr.io/OWNER/sos-backend:latest
+    # Set REGISTRY_OWNER in cloud/.env
+    image: ghcr.io/${REGISTRY_OWNER}/sos-backend:${IMAGE_TAG:-latest}
     container_name: sos-backend
     env_file:
       - ./backend/.env
@@ -31,6 +37,7 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+    image: ghcr.io/${REGISTRY_OWNER}/sos-frontend:${IMAGE_TAG:-latest}
     container_name: sos-frontend
     restart: unless-stopped
 

@@ -4,59 +4,67 @@ name: SOS Gateway API
 meta:
   id: wrk_9e49ffc21a0848e1a48207fcca839ca3
   created: 1775120803760
-  modified: 1775120803760
-  description: ""
+  modified: 1780000000000
+  description: "Full API collection — Auth, Devices, Gateway, Alerts"
 collection:
+
+  # ════════════════════════════════════════════════════════════
+  # HEALTH
+  # ════════════════════════════════════════════════════════════
   - name: Health
     meta:
-      id: fld_76586d4f30984dbe9420604799932e77
+      id: fld_0000000000000000000000000000001a
       created: 1775120803761
-      modified: 1775120803761
-      sortKey: -1775120803761
+      modified: 1780000000000
+      sortKey: -100
       description: ""
     children:
       - url: "{{ base_url }}/"
         name: GET / — Health Check
         meta:
-          id: req_0f1b21566b874028aa5ca8b2553c1b83
+          id: req_0000000000000000000000000000001b
           created: 1775120803761
-          modified: 1775120803761
+          modified: 1780000000000
           isPrivate: false
-          description: ""
-          sortKey: -1775120803761
+          description: "Returns server status and connected WS clients"
+          sortKey: -100
         method: GET
         settings:
           renderRequestBody: true
           encodeUrl: true
           followRedirects: global
-          cookies:
-            send: true
-            store: true
+          cookies: { send: true, store: true }
           rebuildPath: true
-  - name: Gateway
+
+  # ════════════════════════════════════════════════════════════
+  # AUTH
+  # ════════════════════════════════════════════════════════════
+  - name: Auth
     meta:
-      id: fld_960ff16ded2e49878c324d175f0a67c1
-      created: 1775120803762
-      modified: 1775120803762
-      sortKey: -1775120803762
-      description: ""
+      id: fld_0000000000000000000000000000002a
+      created: 1780000000000
+      modified: 1780000000000
+      sortKey: -200
+      description: "Registration, login, Google OAuth, invites"
     children:
-      - url: "{{ base_url }}/api/gateway/register"
-        name: POST /api/gateway/register ❌ Invalid secret (401)
+
+      - url: "{{ base_url }}/api/auth/register"
+        name: POST /api/auth/register ✅ Register new user
         meta:
-          id: req_0e60497538ac4a7cae6adf4720adddf7
-          created: 1775120803762
-          modified: 1775121444452
+          id: req_0000000000000000000000000000002b
+          created: 1780000000000
+          modified: 1780000000000
           isPrivate: false
-          description: ""
-          sortKey: -1775120803762
+          description: "Open registration — no invite required. Returns JWT + user."
+          sortKey: -210
         method: POST
         body:
           mimeType: application/json
           text: |-
             {
-              "gateway_id": "{{ gateway_id }}",
-              "secret": "WRONG_SECRET"
+              "email": "alice@example.com",
+              "password": "secret123",
+              "name": "Alice"
             }
         headers:
           - name: Content-Type
@@ -65,19 +73,435 @@ collection:
           renderRequestBody: true
           encodeUrl: true
           followRedirects: global
-          cookies:
-            send: true
-            store: true
+          cookies: { send: true, store: true }
           rebuildPath: true
+
+      - url: "{{ base_url }}/api/auth/register"
+        name: POST /api/auth/register ✅ Register with invite
+        meta:
+          id: req_0000000000000000000000000000002c
+          created: 1780000000000
+          modified: 1780000000000
+          isPrivate: false
+          description: "Register using an invite token. Pre-fills email if invite has one."
+          sortKey: -209
+        method: POST
+        body:
+          mimeType: application/json
+          text: |-
+            {
+              "email": "bob@example.com",
+              "password": "secret123",
+              "name": "Bob",
+              "invite_token": "{{ invite_token }}"
+            }
+        headers:
+          - name: Content-Type
+            value: application/json
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+      - url: "{{ base_url }}/api/auth/register"
+        name: POST /api/auth/register ❌ Short password (400)
+        meta:
+          id: req_0000000000000000000000000000002d
+          created: 1780000000000
+          modified: 1780000000000
+          isPrivate: false
+          description: "Must fail — password is only 3 chars"
+          sortKey: -208
+        method: POST
+        body:
+          mimeType: application/json
+          text: |-
+            {
+              "email": "bad@example.com",
+              "password": "abc"
+            }
+        headers:
+          - name: Content-Type
+            value: application/json
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+      - url: "{{ base_url }}/api/auth/login"
+        name: POST /api/auth/login ✅ Login (Passport Local)
+        meta:
+          id: req_0000000000000000000000000000002e
+          created: 1780000000000
+          modified: 1780000000000
+          isPrivate: false
+          description: "Returns JWT. Copy the token value into the jwt_token environment variable."
+          sortKey: -207
+        method: POST
+        body:
+          mimeType: application/json
+          text: |-
+            {
+              "email": "{{ admin_email }}",
+              "password": "{{ admin_password }}"
+            }
+        headers:
+          - name: Content-Type
+            value: application/json
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+      - url: "{{ base_url }}/api/auth/login"
+        name: POST /api/auth/login ❌ Wrong password (401)
+        meta:
+          id: req_0000000000000000000000000000002f
+          created: 1780000000000
+          modified: 1780000000000
+          isPrivate: false
+          description: "Must fail with 401"
+          sortKey: -206
+        method: POST
+        body:
+          mimeType: application/json
+          text: |-
+            {
+              "email": "{{ admin_email }}",
+              "password": "wrongpassword"
+            }
+        headers:
+          - name: Content-Type
+            value: application/json
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+      - url: "{{ base_url }}/api/auth/me"
+        name: GET /api/auth/me ✅ Current user
+        meta:
+          id: req_0000000000000000000000000000002g
+          created: 1780000000000
+          modified: 1780000000000
+          isPrivate: false
+          description: "Returns the authenticated user's info from the JWT."
+          sortKey: -205
+        method: GET
+        headers:
+          - name: Authorization
+            value: "Bearer {{ jwt_token }}"
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+      - url: "{{ base_url }}/api/auth/me"
+        name: GET /api/auth/me ❌ No token (401)
+        meta:
+          id: req_0000000000000000000000000000002h
+          created: 1780000000000
+          modified: 1780000000000
+          isPrivate: false
+          description: "Must fail — no Authorization header"
+          sortKey: -204
+        method: GET
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+      - url: "{{ base_url }}/api/auth/google"
+        name: GET /api/auth/google — Google OAuth start (browser only)
+        meta:
+          id: req_0000000000000000000000000000002i
+          created: 1780000000000
+          modified: 1780000000000
+          isPrivate: false
+          description: "Open this URL in a browser — it redirects to Google. Returns 503 if GOOGLE_CLIENT_ID is not set."
+          sortKey: -203
+        method: GET
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+      - url: "{{ base_url }}/api/auth/invites"
+        name: POST /api/auth/invites ✅ Create invite link
+        meta:
+          id: req_0000000000000000000000000000002j
+          created: 1780000000000
+          modified: 1780000000000
+          isPrivate: false
+          description: "Creates a 7-day invite link. email is optional — omit to create an open invite."
+          sortKey: -202
+        method: POST
+        body:
+          mimeType: application/json
+          text: |-
+            {
+              "email": "newuser@example.com"
+            }
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: Authorization
+            value: "Bearer {{ jwt_token }}"
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+      - url: "{{ base_url }}/api/auth/invites/{{ invite_token }}"
+        name: GET /api/auth/invites/:token — Check invite
+        meta:
+          id: req_0000000000000000000000000000002k
+          created: 1780000000000
+          modified: 1780000000000
+          isPrivate: false
+          description: "Public endpoint — returns invite info (email, expiry). 410 if used or expired."
+          sortKey: -201
+        method: GET
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+  # ════════════════════════════════════════════════════════════
+  # DEVICES  (user-facing device management)
+  # ════════════════════════════════════════════════════════════
+  - name: Devices
+    meta:
+      id: fld_0000000000000000000000000000003a
+      created: 1780000000000
+      modified: 1780000000000
+      sortKey: -300
+      description: "CRUD for the authenticated user's IoT devices"
+    children:
+
+      - url: "{{ base_url }}/api/devices"
+        name: GET /api/devices ✅ List my devices
+        meta:
+          id: req_0000000000000000000000000000003b
+          created: 1780000000000
+          modified: 1780000000000
+          isPrivate: false
+          description: "Returns only devices owned by the authenticated user."
+          sortKey: -310
+        method: GET
+        headers:
+          - name: Authorization
+            value: "Bearer {{ jwt_token }}"
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+      - url: "{{ base_url }}/api/devices"
+        name: POST /api/devices ✅ Create device (get registration code)
+        meta:
+          id: req_0000000000000000000000000000003c
+          created: 1780000000000
+          modified: 1780000000000
+          isPrivate: false
+          description: "Creates a device slot. Returns a one-time registration_code valid for 24 h. Copy it into registration_code env variable."
+          sortKey: -309
+        method: POST
+        body:
+          mimeType: application/json
+          text: |-
+            {
+              "name": "Office SOS Button"
+            }
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: Authorization
+            value: "Bearer {{ jwt_token }}"
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+      - url: "{{ base_url }}/api/devices/{{ device_db_id }}"
+        name: PATCH /api/devices/:id ✅ Rename device
+        meta:
+          id: req_0000000000000000000000000000003d
+          created: 1780000000000
+          modified: 1780000000000
+          isPrivate: false
+          description: "Rename a device. device_db_id is the integer id from the list/create response."
+          sortKey: -308
+        method: PATCH
+        body:
+          mimeType: application/json
+          text: |-
+            {
+              "name": "Lobby SOS Button"
+            }
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: Authorization
+            value: "Bearer {{ jwt_token }}"
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+      - url: "{{ base_url }}/api/devices/{{ device_db_id }}/revoke"
+        name: POST /api/devices/:id/revoke ✅ Revoke device token
+        meta:
+          id: req_0000000000000000000000000000003e
+          created: 1780000000000
+          modified: 1780000000000
+          isPrivate: false
+          description: "Clears the device token — the physical device can no longer send data until re-registered."
+          sortKey: -307
+        method: POST
+        headers:
+          - name: Authorization
+            value: "Bearer {{ jwt_token }}"
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+      - url: "{{ base_url }}/api/devices/{{ device_db_id }}/regen-code"
+        name: POST /api/devices/:id/regen-code ✅ New registration code
+        meta:
+          id: req_0000000000000000000000000000003f
+          created: 1780000000000
+          modified: 1780000000000
+          isPrivate: false
+          description: "Generates a fresh 24 h registration code (also clears the old token)."
+          sortKey: -306
+        method: POST
+        headers:
+          - name: Authorization
+            value: "Bearer {{ jwt_token }}"
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+      - url: "{{ base_url }}/api/devices/{{ device_db_id }}"
+        name: DELETE /api/devices/:id ✅ Delete device
+        meta:
+          id: req_0000000000000000000000000000003g
+          created: 1780000000000
+          modified: 1780000000000
+          isPrivate: false
+          description: "Deletes the device and all its SOS history."
+          sortKey: -305
+        method: DELETE
+        headers:
+          - name: Authorization
+            value: "Bearer {{ jwt_token }}"
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+      - url: "{{ base_url }}/api/devices/9999"
+        name: DELETE /api/devices/:id ❌ Not owner / not found (404)
+        meta:
+          id: req_0000000000000000000000000000003h
+          created: 1780000000000
+          modified: 1780000000000
+          isPrivate: false
+          description: "ID 9999 doesn't belong to the current user — must return 404."
+          sortKey: -304
+        method: DELETE
+        headers:
+          - name: Authorization
+            value: "Bearer {{ jwt_token }}"
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+  # ════════════════════════════════════════════════════════════
+  # GATEWAY  (device → server communication)
+  # ════════════════════════════════════════════════════════════
+  - name: Gateway
+    meta:
+      id: fld_960ff16ded2e49878c324d175f0a67c1
+      created: 1775120803762
+      modified: 1780000000000
+      sortKey: -400
+      description: "Endpoints called by the physical IoT device / gateway firmware"
+    children:
+
       - url: "{{ base_url }}/api/gateway/register"
-        name: POST /api/gateway/register Register Gateway
+        name: POST /api/gateway/register ✅ With registration code (new flow)
+        meta:
+          id: req_0000000000000000000000000000004b
+          created: 1780000000000
+          modified: 1780000000000
+          isPrivate: false
+          description: "Firmware registers using the code from POST /api/devices. Returns gateway token — save it as gateway_token."
+          sortKey: -410
+        method: POST
+        body:
+          mimeType: application/json
+          text: |-
+            {
+              "gateway_id": "{{ gateway_id }}",
+              "device_id": "{{ device_id }}",
+              "registration_code": "{{ registration_code }}"
+            }
+        headers:
+          - name: Content-Type
+            value: application/json
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+      - url: "{{ base_url }}/api/gateway/register"
+        name: POST /api/gateway/register ✅ With global secret (legacy)
         meta:
           id: req_e5875a05917048de9307d14ff2364cf8
           created: 1775120803762
-          modified: 1775121441950
+          modified: 1780000000000
           isPrivate: false
-          description: ""
-          sortKey: -1775120803762
+          description: "Old flow using REGISTRATION_SECRET — still supported for existing firmware."
+          sortKey: -409
         method: POST
         body:
           mimeType: application/json
@@ -94,55 +518,71 @@ collection:
           renderRequestBody: true
           encodeUrl: true
           followRedirects: global
-          cookies:
-            send: true
-            store: true
+          cookies: { send: true, store: true }
           rebuildPath: true
-      - url: "{{ base_url }}/api/gateways"
-        name: GET /api/gateways list of gateways
+
+      - url: "{{ base_url }}/api/gateway/register"
+        name: POST /api/gateway/register ❌ Invalid code (401)
         meta:
-          id: req_0bda74b0a58e41af93079d8b18db8f73
-          created: 1775120803764
-          modified: 1775121439514
+          id: req_0e60497538ac4a7cae6adf4720adddf7
+          created: 1775120803762
+          modified: 1780000000000
           isPrivate: false
-          description: ""
-          sortKey: -1775120803764
-        method: GET
+          description: "Must fail — code does not exist"
+          sortKey: -408
+        method: POST
+        body:
+          mimeType: application/json
+          text: |-
+            {
+              "gateway_id": "{{ gateway_id }}",
+              "registration_code": "BADCODE1"
+            }
+        headers:
+          - name: Content-Type
+            value: application/json
         settings:
           renderRequestBody: true
           encodeUrl: true
           followRedirects: global
-          cookies:
-            send: true
-            store: true
+          cookies: { send: true, store: true }
           rebuildPath: true
-      - url: "{{ base_url }}/api/gateways/{{ gateway_id }}"
-        name: GET /api/gateways/:id — single gateway status
+
+      - url: "{{ base_url }}/api/gateway/register"
+        name: POST /api/gateway/register ❌ No gateway_id (400)
         meta:
-          id: req_a1b2c3d4e5f64a7b8c9d0e1f2a3b4c5d
+          id: req_f425195a46ea4c4cb5cd2fbb8cdf304e
           created: 1775120803764
-          modified: 1775120803764
+          modified: 1780000000000
           isPrivate: false
-          description: ""
-          sortKey: -1775120803763
-        method: GET
+          description: "Must fail — gateway_id is required"
+          sortKey: -407
+        method: POST
+        body:
+          mimeType: application/json
+          text: |-
+            {
+              "registration_code": "{{ registration_code }}"
+            }
+        headers:
+          - name: Content-Type
+            value: application/json
         settings:
           renderRequestBody: true
           encodeUrl: true
           followRedirects: global
-          cookies:
-            send: true
-            store: true
+          cookies: { send: true, store: true }
           rebuildPath: true
+
       - url: "{{ base_url }}/api/gateway/ping"
         name: POST /api/gateway/ping ✅ Heartbeat
         meta:
           id: req_b2c3d4e5f6a74b8c9d0e1f2a3b4c5d6e
           created: 1775120803764
-          modified: 1775120803764
+          modified: 1780000000000
           isPrivate: false
-          description: ""
-          sortKey: -1775120803762
+          description: "Firmware keepalive. Updates last_seen_at."
+          sortKey: -406
         method: POST
         headers:
           - name: x-gateway-token
@@ -151,19 +591,18 @@ collection:
           renderRequestBody: true
           encodeUrl: true
           followRedirects: global
-          cookies:
-            send: true
-            store: true
+          cookies: { send: true, store: true }
           rebuildPath: true
+
       - url: "{{ base_url }}/api/gateway/warning"
         name: POST /api/gateway/warning ✅ Set warning
         meta:
           id: req_c3d4e5f6a7b84c9d0e1f2a3b4c5d6e7f
           created: 1775120803764
-          modified: 1775120803764
+          modified: 1780000000000
           isPrivate: false
-          description: ""
-          sortKey: -1775120803761
+          description: "Firmware reports a problem (e.g. BLE node disconnected)."
+          sortKey: -405
         method: POST
         body:
           mimeType: application/json
@@ -180,19 +619,18 @@ collection:
           renderRequestBody: true
           encodeUrl: true
           followRedirects: global
-          cookies:
-            send: true
-            store: true
+          cookies: { send: true, store: true }
           rebuildPath: true
+
       - url: "{{ base_url }}/api/gateway/warning"
         name: POST /api/gateway/warning ✅ Clear warning
         meta:
           id: req_d4e5f6a7b8c94d0e1f2a3b4c5d6e7f8a
           created: 1775120803764
-          modified: 1775120803764
+          modified: 1780000000000
           isPrivate: false
-          description: ""
-          sortKey: -1775120803760
+          description: "Send message: null to clear a previous warning."
+          sortKey: -404
         method: POST
         body:
           mimeType: application/json
@@ -209,87 +647,30 @@ collection:
           renderRequestBody: true
           encodeUrl: true
           followRedirects: global
-          cookies:
-            send: true
-            store: true
+          cookies: { send: true, store: true }
           rebuildPath: true
-      - url: "{{ base_url }}/api/gateway/register"
-        name: POST /api/gateway/register ❌ No gateway_id (400)
-        meta:
-          id: req_f425195a46ea4c4cb5cd2fbb8cdf304e
-          created: 1775120803764
-          modified: 1775121436651
-          isPrivate: false
-          description: ""
-          sortKey: -1775120803764
-        method: POST
-        body:
-          mimeType: application/json
-          text: |-
-            {
-              "secret": "{{ registration_secret }}"
-            }
-        headers:
-          - name: Content-Type
-            value: application/json
-        settings:
-          renderRequestBody: true
-          encodeUrl: true
-          followRedirects: global
-          cookies:
-            send: true
-            store: true
-          rebuildPath: true
+
+  # ════════════════════════════════════════════════════════════
+  # GATEWAY DATA  (SOS events from firmware)
+  # ════════════════════════════════════════════════════════════
   - name: Gateway Data
     meta:
       id: fld_e2e716c01fa64c88b61faa635253570e
       created: 1775120803764
-      modified: 1775120803764
-      sortKey: -1775120803764
-      description: ""
+      modified: 1780000000000
+      sortKey: -500
+      description: "SOS event payloads sent by the firmware"
     children:
-      - url: "{{ base_url }}/api/gateway/data"
-        name: POST /api/gateway/data Non-SOS (ignored)
-        meta:
-          id: req_12a82e42ff2844ea895cd6e63703fa5a
-          created: 1775120803765
-          modified: 1775121434400
-          isPrivate: false
-          description: ""
-          sortKey: -1775120803765
-        method: POST
-        body:
-          mimeType: application/json
-          text: |-
-            {
-              "timestamp": 1711929600000,
-              "device_id": "{{ device_id }}",
-              "button_pressed": 0,
-              "gateway_id": "{{ gateway_id }}",
-              "sos_alert": false
-            }
-        headers:
-          - name: Content-Type
-            value: application/json
-          - name: x-gateway-token
-            value: "{{ gateway_token }}"
-        settings:
-          renderRequestBody: true
-          encodeUrl: true
-          followRedirects: global
-          cookies:
-            send: true
-            store: true
-          rebuildPath: true
+
       - url: "{{ base_url }}/api/gateway/data"
         name: POST /api/gateway/data ✅ SOS Alert
         meta:
           id: req_94b94068ed1746eea928e891ade17467
           created: 1775120803765
-          modified: 1775121431829
+          modified: 1780000000000
           isPrivate: false
-          description: ""
-          sortKey: -1775120803765
+          description: "Triggers a real SOS event — broadcast to all WebSocket clients."
+          sortKey: -510
         method: POST
         body:
           mimeType: application/json
@@ -310,19 +691,50 @@ collection:
           renderRequestBody: true
           encodeUrl: true
           followRedirects: global
-          cookies:
-            send: true
-            store: true
+          cookies: { send: true, store: true }
           rebuildPath: true
+
       - url: "{{ base_url }}/api/gateway/data"
-        name: POST /api/gateway/data ❌ No token
+        name: POST /api/gateway/data — Non-SOS (ignored)
+        meta:
+          id: req_12a82e42ff2844ea895cd6e63703fa5a
+          created: 1775120803765
+          modified: 1780000000000
+          isPrivate: false
+          description: "sos_alert: false — server acknowledges but does not store."
+          sortKey: -509
+        method: POST
+        body:
+          mimeType: application/json
+          text: |-
+            {
+              "timestamp": 1711929600000,
+              "device_id": "{{ device_id }}",
+              "button_pressed": 0,
+              "gateway_id": "{{ gateway_id }}",
+              "sos_alert": false
+            }
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: x-gateway-token
+            value: "{{ gateway_token }}"
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+      - url: "{{ base_url }}/api/gateway/data"
+        name: POST /api/gateway/data ❌ No token (401)
         meta:
           id: req_84d40d0b97a841c19790a851f2dd3a6b
           created: 1775120803766
-          modified: 1775121429445
+          modified: 1780000000000
           isPrivate: false
-          description: ""
-          sortKey: -1775120803766
+          description: "Must fail — no x-gateway-token header"
+          sortKey: -508
         method: POST
         body:
           mimeType: application/json
@@ -341,19 +753,18 @@ collection:
           renderRequestBody: true
           encodeUrl: true
           followRedirects: global
-          cookies:
-            send: true
-            store: true
+          cookies: { send: true, store: true }
           rebuildPath: true
+
       - url: "{{ base_url }}/api/gateway/data"
-        name: POST /api/gateway/data  ❌ Unacceptable token
+        name: POST /api/gateway/data ❌ Invalid token (401)
         meta:
           id: req_ef699e625ef54c978e59ef80316ba2db
           created: 1775120803766
-          modified: 1775121422998
+          modified: 1780000000000
           isPrivate: false
-          description: ""
-          sortKey: -1775120803766
+          description: "Must fail — token not in database"
+          sortKey: -507
         method: POST
         body:
           mimeType: application/json
@@ -374,52 +785,137 @@ collection:
           renderRequestBody: true
           encodeUrl: true
           followRedirects: global
-          cookies:
-            send: true
-            store: true
+          cookies: { send: true, store: true }
           rebuildPath: true
+
+  # ════════════════════════════════════════════════════════════
+  # ADMIN — all gateways (dashboard view)
+  # ════════════════════════════════════════════════════════════
+  - name: Admin
+    meta:
+      id: fld_0000000000000000000000000000006a
+      created: 1780000000000
+      modified: 1780000000000
+      sortKey: -600
+      description: "Admin-level views requiring JWT"
+    children:
+
+      - url: "{{ base_url }}/api/gateways"
+        name: GET /api/gateways ✅ List all gateways
+        meta:
+          id: req_0bda74b0a58e41af93079d8b18db8f73
+          created: 1775120803764
+          modified: 1780000000000
+          isPrivate: false
+          description: "Returns all registered gateways with owner email. Requires JWT."
+          sortKey: -610
+        method: GET
+        headers:
+          - name: Authorization
+            value: "Bearer {{ jwt_token }}"
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+      - url: "{{ base_url }}/api/gateways/{{ gateway_id }}"
+        name: GET /api/gateways/:id ✅ Single gateway status
+        meta:
+          id: req_a1b2c3d4e5f64a7b8c9d0e1f2a3b4c5d
+          created: 1775120803764
+          modified: 1780000000000
+          isPrivate: false
+          description: "Lookup by gateway_id (the hardware-reported ID, not DB id)."
+          sortKey: -609
+        method: GET
+        headers:
+          - name: Authorization
+            value: "Bearer {{ jwt_token }}"
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+  # ════════════════════════════════════════════════════════════
+  # ALERTS
+  # ════════════════════════════════════════════════════════════
   - name: Alerts
     meta:
       id: fld_bb1dba645436441da19b0c144c48ce3d
       created: 1775120803766
-      modified: 1775120803766
-      sortKey: -1775120803766
-      description: ""
+      modified: 1780000000000
+      sortKey: -700
+      description: "SOS event history"
     children:
+
       - url: "{{ base_url }}/api/alerts/sos"
-        name: GET /api/alerts/sos get alerts
+        name: GET /api/alerts/sos ✅ SOS history
         meta:
           id: req_e2c623a7a16b4ce28e38002b58af221a
           created: 1775120803767
-          modified: 1775121427117
+          modified: 1780000000000
           isPrivate: false
-          description: ""
-          sortKey: -1775120803767
+          description: "All SOS events, newest first. Requires JWT."
+          sortKey: -710
+        method: GET
+        headers:
+          - name: Authorization
+            value: "Bearer {{ jwt_token }}"
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+      - url: "{{ base_url }}/api/alerts/sos"
+        name: GET /api/alerts/sos ❌ No token (401)
+        meta:
+          id: req_0000000000000000000000000000007b
+          created: 1780000000000
+          modified: 1780000000000
+          isPrivate: false
+          description: "Must fail — protected endpoint"
+          sortKey: -709
         method: GET
         settings:
           renderRequestBody: true
           encodeUrl: true
           followRedirects: global
-          cookies:
-            send: true
-            store: true
+          cookies: { send: true, store: true }
           rebuildPath: true
+
 cookieJar:
   name: Default Jar
   meta:
     id: jar_45715b405a4b15f961f440cb3aad8c84efdd7bcd
     created: 1775120803845
     modified: 1775120803845
+
 environments:
   name: Base Environment
   meta:
     id: env_d5f7c979ca184f068152eff98ce8c597
     created: 1775120803760
-    modified: 1775121389526
+    modified: 1780000000000
     isPrivate: false
   data:
-    base_url:
-    registration_secret: 
-    gateway_id:
-    device_id: 
-    gateway_token:
+    base_url: "http://localhost:3001"
+    # ── Auth ──────────────────────────────────────────────────
+    admin_email: "admin@example.com"
+    admin_password: "admin123"
+    jwt_token: ""          # paste here after running login
+    # ── Devices ───────────────────────────────────────────────
+    device_db_id: ""       # paste integer id from POST /api/devices response
+    registration_code: ""  # paste from POST /api/devices response
+    # ── Gateway (firmware side) ────────────────────────────────
+    gateway_id: "esp32-test-001"
+    device_id: "sos-button-01"
+    gateway_token: ""      # paste from POST /api/gateway/register response
+    registration_secret: ""
+    # ── Invites ───────────────────────────────────────────────
+    invite_token: ""       # paste from POST /api/auth/invites response
