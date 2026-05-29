@@ -25,6 +25,7 @@ docker build -t "$FRONTEND_IMAGE" cloud/frontend
 
 # ── 2. Sync compose files (fast, only changed files) ─────────────────────────
 log "Syncing compose files to server..."
+ssh "$SERVER" "mkdir -p ${REMOTE_PATH}/cloud"
 rsync -az --exclude 'node_modules' --exclude '.git' --exclude 'data' \
   --exclude 'backend/.env' \
   cloud/ "${SERVER}:${REMOTE_PATH}/cloud/"
