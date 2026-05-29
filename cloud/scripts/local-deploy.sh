@@ -7,12 +7,12 @@
 #   SERVER=root@1.2.3.4 bash cloud/scripts/local-deploy.sh
 set -euo pipefail
 
-SERVER="${SERVER:-deploy@IP_СЕРВЕРА}"
+SERVER="${SERVER:-deploy@209.38.221.215}"
 REMOTE_PATH="${REMOTE_PATH:-~/sos/SOS-IOT-PROJECT}"
 COMPOSE_FILE="cloud/docker-compose.yml"
 
-BACKEND_IMAGE="ghcr.io/yehjk/sos-backend:latest"
-FRONTEND_IMAGE="ghcr.io/yehjk/sos-frontend:latest"
+BACKEND_IMAGE="sos-backend:latest"
+FRONTEND_IMAGE="sos-frontend:latest"
 
 log() { echo "[$(date '+%H:%M:%S')] $*"; }
 
