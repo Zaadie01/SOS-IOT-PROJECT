@@ -94,21 +94,31 @@ module.exports = function gatewayRoutes(db, broadcast) {
 
     // ── Admin / Dashboard ─────────────────────────────────────────────────────
 
-    // List all registered gateways
+    // List gateways — admin sees all, regular user sees only their own
     router.get('/gateways', requireAuth, (req, res) => {
-        const rows = db.prepare(`
-            SELECT g.id, g.gateway_id, g.device_id, g.name, g.owner_id,
-                   g.registered_at, g.last_seen_at, g.warning,
-                   CASE WHEN g.token IS NOT NULL THEN 1 ELSE 0 END AS is_registered,
-                   u.email AS owner_email
-            FROM gateways g
-            LEFT JOIN users u ON u.id = g.owner_id
-            ORDER BY g.registered_at DESC
-        `).all();
+        const isAdmin = req.user.role === 'admin';
+        const rows = isAdmin
+            ? db.prepare(`
+                SELECT g.id, g.gateway_id, g.device_id, g.name, g.owner_id,
+                       g.registered_at, g.last_seen_at, g.warning,
+                       CASE WHEN g.token IS NOT NULL THEN 1 ELSE 0 END AS is_registered,
+                       u.email AS owner_email
+                FROM gateways g
+                LEFT JOIN users u ON u.id = g.owner_id
+                ORDER BY g.registered_at DESC
+              `).all()
+            : db.prepare(`
+                SELECT g.id, g.gateway_id, g.device_id, g.name, g.owner_id,
+                       g.registered_at, g.last_seen_at, g.warning,
+                       CASE WHEN g.token IS NOT NULL THEN 1 ELSE 0 END AS is_registered
+                FROM gateways g
+                WHERE g.owner_id = ?
+                ORDER BY g.registered_at DESC
+              `).all(req.user.id);
         res.json({ gateways: rows });
     });
 
-    // Single gateway by gateway_id
+    // Single gateway — accessible only by owner or admin
     router.get('/gateways/:gateway_id', requireAuth, (req, res) => {
         const row = db.prepare(`
             SELECT g.id, g.gateway_id, g.device_id, g.name, g.owner_id,
@@ -118,6 +128,9 @@ module.exports = function gatewayRoutes(db, broadcast) {
             WHERE g.gateway_id = ?
         `).get(req.params.gateway_id);
         if (!row) return res.status(404).json({ error: 'Gateway not found' });
+        if (req.user.role !== 'admin' && row.owner_id !== req.user.id) {
+            return res.status(403).json({ error: 'Forbidden' });
+        }
         res.json({ gateway: row });
     });
 
