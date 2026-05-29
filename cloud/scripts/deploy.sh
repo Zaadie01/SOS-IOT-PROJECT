@@ -1,47 +1,35 @@
 #!/usr/bin/env bash
-# deploy.sh — pull latest images (or build locally), restart, health-check.
+# deploy.sh — build images, restart containers, health-check.
 # On failure: automatically restores the previous images (rollback).
 #
 # Usage:
-#   ./cloud/scripts/deploy.sh              # build locally (dev)
-#   ./cloud/scripts/deploy.sh --no-build   # pull from GHCR (CI/CD — server is weak)
-#   ./cloud/scripts/deploy.sh --no-pull    # skip git pull (rebuild only)
+#   ./cloud/scripts/deploy.sh              # normal deploy
+#   ./cloud/scripts/deploy.sh --no-pull    # rebuild only (skip git pull)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 COMPOSE_DIR="$PROJECT_DIR/cloud"
 
+BACKEND_IMAGE="sos-backend"
+FRONTEND_IMAGE="sos-frontend"
 HEALTH_URL="http://localhost:3001/"
 HEALTH_RETRIES=10
-HEALTH_INTERVAL=3   # seconds between attempts
+HEALTH_INTERVAL=3
 
-NO_BUILD=false
 NO_GIT_PULL=false
 for arg in "$@"; do
-    case $arg in
-        --no-build) NO_BUILD=true ;;
-        --no-pull)  NO_GIT_PULL=true ;;
-    esac
+    [[ $arg == --no-pull ]] && NO_GIT_PULL=true
 done
 
 log()  { echo "[$(date '+%H:%M:%S')] $*"; }
 ok()   { echo "[$(date '+%H:%M:%S')] ✅  $*"; }
 err()  { echo "[$(date '+%H:%M:%S')] ❌  $*" >&2; }
 
-# ── Detect docker compose command ────────────────────────────────────────────
 if docker compose version &>/dev/null 2>&1; then
     DC="docker compose"
 else
     DC="docker-compose"
-fi
-
-# ── Load compose-level env (REGISTRY_OWNER, IMAGE_TAG) ───────────────────────
-if [[ -f "$COMPOSE_DIR/.env" ]]; then
-    set -o allexport
-    # shellcheck disable=SC1090
-    source "$COMPOSE_DIR/.env"
-    set +o allexport
 fi
 
 # ── Step 1: git pull ──────────────────────────────────────────────────────────
@@ -58,18 +46,13 @@ fi
 
 COMMIT=$(git -C "$PROJECT_DIR" rev-parse --short HEAD)
 
-# ── Resolve image names from compose env ─────────────────────────────────────
-REGISTRY_OWNER="${REGISTRY_OWNER:-}"
-BACKEND_IMAGE="ghcr.io/${REGISTRY_OWNER}/sos-backend"
-FRONTEND_IMAGE="ghcr.io/${REGISTRY_OWNER}/sos-frontend"
-
-# ── Step 2: save rollback tags (local, instant — no copy of layers) ───────────
+# ── Step 2: save rollback tags ────────────────────────────────────────────────
 log "Saving rollback images..."
 SAVED_BACKEND=false
 SAVED_FRONTEND=false
 
-if docker image inspect "${BACKEND_IMAGE}:latest"  &>/dev/null; then
-    docker tag "${BACKEND_IMAGE}:latest"  "${BACKEND_IMAGE}:rollback"
+if docker image inspect "${BACKEND_IMAGE}:latest" &>/dev/null; then
+    docker tag "${BACKEND_IMAGE}:latest" "${BACKEND_IMAGE}:rollback"
     SAVED_BACKEND=true
     log "  backend:rollback saved"
 fi
@@ -79,20 +62,11 @@ if docker image inspect "${FRONTEND_IMAGE}:latest" &>/dev/null; then
     log "  frontend:rollback saved"
 fi
 
-# ── Step 3: build or pull ─────────────────────────────────────────────────────
-if [[ "$NO_BUILD" == true ]]; then
-    if [[ -z "$REGISTRY_OWNER" ]]; then
-        err "REGISTRY_OWNER is not set. Create cloud/.env with REGISTRY_OWNER=your-github-username"
-        exit 1
-    fi
-    log "Pulling images from GHCR (${REGISTRY_OWNER})..."
-    $DC -f "$COMPOSE_DIR/docker-compose.yml" pull
-else
-    log "Building images locally..."
-    $DC -f "$COMPOSE_DIR/docker-compose.yml" build
-fi
+# ── Step 3: build ─────────────────────────────────────────────────────────────
+log "Building images..."
+$DC -f "$COMPOSE_DIR/docker-compose.yml" build
 
-# ── Step 4: restart containers ────────────────────────────────────────────────
+# ── Step 4: restart ───────────────────────────────────────────────────────────
 log "Restarting containers..."
 $DC -f "$COMPOSE_DIR/docker-compose.yml" up -d
 
@@ -103,16 +77,14 @@ until curl -sf "$HEALTH_URL" -o /dev/null; do
     ATTEMPT=$((ATTEMPT + 1))
     if [[ $ATTEMPT -ge $HEALTH_RETRIES ]]; then
         err "Health check failed after $((HEALTH_RETRIES * HEALTH_INTERVAL))s."
-
         if [[ "$SAVED_BACKEND" == true ]] || [[ "$SAVED_FRONTEND" == true ]]; then
             err "Auto-rolling back to previous images..."
             [[ "$SAVED_BACKEND"  == true ]] && docker tag "${BACKEND_IMAGE}:rollback"  "${BACKEND_IMAGE}:latest"
             [[ "$SAVED_FRONTEND" == true ]] && docker tag "${FRONTEND_IMAGE}:rollback" "${FRONTEND_IMAGE}:latest"
-            # --no-pull: use the locally tagged images, don't re-pull from registry
             $DC -f "$COMPOSE_DIR/docker-compose.yml" up --no-pull --force-recreate -d
-            err "Rollback done. Previous version restored."
+            err "Rollback done."
         else
-            err "No rollback images found — nothing to restore."
+            err "No rollback images found."
         fi
         exit 1
     fi
