@@ -7,49 +7,35 @@ module.exports = function gatewayRoutes(db, broadcast) {
 
     // ── Device → Server ───────────────────────────────────────────────────────
 
-    // Register: accepts registration_code (new) or global secret (legacy)
+    // Register using a one-time registration_code created via POST /api/devices
     router.post('/gateway/register', (req, res) => {
-        const { gateway_id, device_id, registration_code, secret } = req.body;
+        const { gateway_id, device_id, registration_code } = req.body;
         if (!gateway_id) {
             return res.status(400).json({ error: 'gateway_id is required' });
         }
+        if (!registration_code) {
+            return res.status(400).json({ error: 'registration_code is required' });
+        }
+
+        const slot = db.prepare(`
+            SELECT * FROM gateways
+            WHERE registration_code = ? AND reg_code_expires_at > ?
+        `).get(registration_code, Date.now());
+
+        if (!slot) {
+            return res.status(401).json({ error: 'Invalid or expired registration code' });
+        }
 
         const token = crypto.randomBytes(32).toString('hex');
+        db.prepare(`
+            UPDATE gateways
+            SET gateway_id = ?, device_id = ?, token = ?, registered_at = ?,
+                registration_code = NULL, reg_code_expires_at = NULL
+            WHERE id = ?
+        `).run(gateway_id, device_id || null, token, Date.now(), slot.id);
 
-        if (registration_code) {
-            const slot = db.prepare(`
-                SELECT * FROM gateways
-                WHERE registration_code = ? AND reg_code_expires_at > ?
-            `).get(registration_code, Date.now());
-
-            if (!slot) {
-                return res.status(401).json({ error: 'Invalid or expired registration code' });
-            }
-
-            db.prepare(`
-                UPDATE gateways
-                SET gateway_id = ?, device_id = ?, token = ?, registered_at = ?,
-                    registration_code = NULL, reg_code_expires_at = NULL
-                WHERE id = ?
-            `).run(gateway_id, device_id || null, token, Date.now(), slot.id);
-
-            console.log(`[REGISTER] Gateway registered via code: id=${gateway_id}`);
-            return res.status(201).json({ token });
-        }
-
-        // Legacy: global REGISTRATION_SECRET
-        if (secret && process.env.REGISTRATION_SECRET && secret === process.env.REGISTRATION_SECRET) {
-            db.prepare(`
-                INSERT OR REPLACE INTO gateways
-                    (gateway_id, device_id, token, registered_at)
-                VALUES (?, ?, ?, ?)
-            `).run(gateway_id, device_id || null, token, Date.now());
-
-            console.log(`[REGISTER] Gateway registered via secret: id=${gateway_id}`);
-            return res.status(201).json({ token });
-        }
-
-        return res.status(400).json({ error: 'registration_code or valid secret is required' });
+        console.log(`[REGISTER] Gateway registered: id=${gateway_id}`);
+        res.status(201).json({ token });
     });
 
     // Receive data (SOS event)
