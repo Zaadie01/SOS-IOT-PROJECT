@@ -45,7 +45,7 @@ collection:
       created: 1780200000000
       modified: 1780200000000
       sortKey: -200
-      description: "Registration, login, Google OAuth, invites"
+      description: "Registration, login, Google OAuth"
     children:
 
       - url: "{{ base_url }}/api/auth/register"
