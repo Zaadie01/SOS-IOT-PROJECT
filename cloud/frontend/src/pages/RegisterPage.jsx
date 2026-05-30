@@ -1,37 +1,24 @@
-import { useState, useEffect } from 'react';
-import { useNavigate, useSearchParams, Link } from 'react-router-dom';
-import { register as apiRegister, fetchInvite } from '../services/api';
+import { useState } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
+import { register as apiRegister } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
 export default function RegisterPage() {
     const { login } = useAuth();
     const navigate = useNavigate();
-    const [searchParams] = useSearchParams();
-    const inviteToken = searchParams.get('invite');
 
     const [email, setEmail] = useState('');
     const [name, setName] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
-    const [inviteInfo, setInviteInfo] = useState(null);
-
-    useEffect(() => {
-        if (!inviteToken) return;
-        fetchInvite(inviteToken)
-            .then(data => {
-                setInviteInfo(data);
-                if (data.email) setEmail(data.email);
-            })
-            .catch(() => setError('Invite link is invalid or expired.'));
-    }, [inviteToken]);
 
     async function handleSubmit(e) {
         e.preventDefault();
         setError('');
         setLoading(true);
         try {
-            const { token, user } = await apiRegister(email, password, name, inviteToken);
+            const { token, user } = await apiRegister(email, password, name);
             login(token, user);
             navigate('/devices', { replace: true });
         } catch (err) {
@@ -45,9 +32,7 @@ export default function RegisterPage() {
         <div className="login-page">
             <div className="login-card">
                 <h1 className="login-title">Create account</h1>
-                <p className="login-subtitle">
-                    {inviteInfo ? `Invited by user #${inviteInfo.created_by}` : 'SOS IoT Dashboard'}
-                </p>
+                <p className="login-subtitle">SOS IoT Dashboard</p>
                 {error && <p className="login-error">{error}</p>}
                 <form onSubmit={handleSubmit} className="login-form">
                     <label className="login-label">
@@ -71,7 +56,6 @@ export default function RegisterPage() {
                             required
                             autoFocus
                             autoComplete="email"
-                            readOnly={!!inviteInfo?.email}
                         />
                     </label>
                     <label className="login-label">

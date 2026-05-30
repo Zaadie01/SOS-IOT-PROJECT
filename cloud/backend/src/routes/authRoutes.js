@@ -2,7 +2,6 @@ const express = require('express');
 const passport = require('passport');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const crypto = require('crypto');
 const { requireAuth } = require('../middleware/auth');
 
 function signToken(user) {
@@ -22,23 +21,13 @@ module.exports = function authRoutes(db) {
 
     // ── Register ────────────────────────────────────────────────────────────
     router.post('/register', (req, res) => {
-        const { email, password, name, invite_token } = req.body;
+        const { email, password, name } = req.body;
         if (!email || !password) {
             return res.status(400).json({ error: 'email and password are required' });
         }
         if (password.length < 6) {
             return res.status(400).json({ error: 'Password must be at least 6 characters' });
         }
-
-        if (invite_token) {
-            const inv = db.prepare(
-                'SELECT * FROM invites WHERE token = ? AND used_at IS NULL'
-            ).get(invite_token);
-            if (!inv || inv.expires_at < Date.now()) {
-                return res.status(400).json({ error: 'Invalid or expired invite token' });
-            }
-        }
-
         if (db.prepare('SELECT id FROM users WHERE email = ?').get(email)) {
             return res.status(409).json({ error: 'Email already registered' });
         }
@@ -48,11 +37,6 @@ module.exports = function authRoutes(db) {
             `INSERT INTO users (email, password_hash, role, display_name, created_at)
              VALUES (?, ?, 'viewer', ?, ?)`
         ).run(email, hash, name || null, Date.now());
-
-        if (invite_token) {
-            db.prepare('UPDATE invites SET used_at = ?, used_by = ? WHERE token = ?')
-              .run(Date.now(), result.lastInsertRowid, invite_token);
-        }
 
         const user = { id: result.lastInsertRowid, email, role: 'viewer', display_name: name || null };
         res.status(201).json({ token: signToken(user), user: safeUser(user) });
@@ -99,33 +83,6 @@ module.exports = function authRoutes(db) {
             res.redirect(`${frontendUrl}/login?token=${token}&user=${userParam}`);
         }
     );
-
-    // ── Create invite ─────────────────────────────────────────────────────────
-    router.post('/invites', requireAuth, (req, res) => {
-        const { email } = req.body;
-        const token = crypto.randomBytes(24).toString('hex');
-        const expiresAt = Date.now() + 7 * 24 * 60 * 60 * 1000; // 7 days
-
-        db.prepare(
-            'INSERT INTO invites (token, created_by, email, expires_at) VALUES (?, ?, ?, ?)'
-        ).run(token, req.user.id, email || null, expiresAt);
-
-        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-        res.status(201).json({
-            invite_token: token,
-            link: `${frontendUrl}/register?invite=${token}`,
-            expires_at: expiresAt,
-        });
-    });
-
-    // ── Check invite (public) ─────────────────────────────────────────────────
-    router.get('/invites/:token', (req, res) => {
-        const inv = db.prepare('SELECT * FROM invites WHERE token = ?').get(req.params.token);
-        if (!inv) return res.status(404).json({ error: 'Invite not found' });
-        if (inv.used_at) return res.status(410).json({ error: 'Invite already used' });
-        if (inv.expires_at < Date.now()) return res.status(410).json({ error: 'Invite expired' });
-        res.json({ email: inv.email, expires_at: inv.expires_at });
-    });
 
     return router;
 };

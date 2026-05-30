@@ -53,22 +53,6 @@ export async function register(email, password, name, invite_token) {
     return res.json();
 }
 
-export async function fetchInvite(token) {
-    const res = await fetch(`${BASE_URL}/auth/invites/${token}`);
-    if (!res.ok) {
-        const json = await res.json().catch(() => ({}));
-        throw new Error(json.error || 'Invalid invite');
-    }
-    return res.json();
-}
-
-export async function createInvite(email) {
-    return apiFetch('/auth/invites', {
-        method: 'POST',
-        body: JSON.stringify({ email }),
-    });
-}
-
 // ── Devices ───────────────────────────────────────────────────────────────────
 
 export async function fetchDevices() {

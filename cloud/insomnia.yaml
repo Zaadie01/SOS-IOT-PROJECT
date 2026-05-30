@@ -184,80 +184,6 @@ collection:
           cookies: { send: true, store: true }
           rebuildPath: true
 
-      - url: "{{ base_url }}/api/auth/invites"
-        name: POST /invites — create invite link
-        meta:
-          id: req_auth_invite_create
-          created: 1780200000000
-          modified: 1780200000000
-          isPrivate: false
-          description: "Creates a 7-day invite link. Copy invite_token from the response."
-          sortKey: -204
-        method: POST
-        body:
-          mimeType: application/json
-          text: |-
-            {
-              "email": "friend@example.com"
-            }
-        headers:
-          - name: Content-Type
-            value: application/json
-          - name: Authorization
-            value: "Bearer {{ jwt_token }}"
-        settings:
-          renderRequestBody: true
-          encodeUrl: true
-          followRedirects: global
-          cookies: { send: true, store: true }
-          rebuildPath: true
-
-      - url: "{{ base_url }}/api/auth/invites/{{ invite_token }}"
-        name: GET /invites/:token — check invite
-        meta:
-          id: req_auth_invite_check
-          created: 1780200000000
-          modified: 1780200000000
-          isPrivate: false
-          description: "Public endpoint. 200 = valid, 410 = already used or expired."
-          sortKey: -203
-        method: GET
-        settings:
-          renderRequestBody: true
-          encodeUrl: true
-          followRedirects: global
-          cookies: { send: true, store: true }
-          rebuildPath: true
-
-      - url: "{{ base_url }}/api/auth/register"
-        name: POST /register — register via invite
-        meta:
-          id: req_auth_register_invite
-          created: 1780200000000
-          modified: 1780200000000
-          isPrivate: false
-          description: "Register using an invite_token. The invite is marked as used after."
-          sortKey: -202
-        method: POST
-        body:
-          mimeType: application/json
-          text: |-
-            {
-              "email": "friend@example.com",
-              "password": "secret123",
-              "name": "Friend",
-              "invite_token": "{{ invite_token }}"
-            }
-        headers:
-          - name: Content-Type
-            value: application/json
-        settings:
-          renderRequestBody: true
-          encodeUrl: true
-          followRedirects: global
-          cookies: { send: true, store: true }
-          rebuildPath: true
-
   # ════════════════════════════════════════════════════════
   # DEVICES
   # ════════════════════════════════════════════════════════
@@ -801,5 +727,3 @@ environments:
     # Firmware identifiers (change as needed)
     gateway_id: "esp32-test-001"
     device_id: "sos-button-01"
-    # After POST /invites
-    invite_token: ""
