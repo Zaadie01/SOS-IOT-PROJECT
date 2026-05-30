@@ -78,14 +78,6 @@ export async function deleteDevice(id) {
     return apiFetch(`/devices/${id}`, { method: 'DELETE' });
 }
 
-export async function revokeDevice(id) {
-    return apiFetch(`/devices/${id}/revoke`, { method: 'POST' });
-}
-
-export async function regenDeviceCode(id) {
-    return apiFetch(`/devices/${id}/regen-code`, { method: 'POST' });
-}
-
 // ── Alerts & Gateways ─────────────────────────────────────────────────────────
 
 export async function fetchAlerts() {

@@ -193,7 +193,7 @@ collection:
       created: 1780200000000
       modified: 1780200000000
       sortKey: -300
-      description: "Device CRUD. Each user sees only their own devices."
+      description: "Device CRUD. Each user sees only their own. Status: pending / online / offline / warning."
     children:
 
       - url: "{{ base_url }}/api/devices"
@@ -203,7 +203,7 @@ collection:
           created: 1780200000000
           modified: 1780200000000
           isPrivate: false
-          description: "Returns only devices owned by the authenticated user."
+          description: "Returns devices with computed status: pending (not registered), online (ping < 5min), offline (ping > 5min), warning (firmware reported a problem)."
           sortKey: -310
         method: GET
         headers:
@@ -263,46 +263,6 @@ collection:
         headers:
           - name: Content-Type
             value: application/json
-          - name: Authorization
-            value: "Bearer {{ jwt_token }}"
-        settings:
-          renderRequestBody: true
-          encodeUrl: true
-          followRedirects: global
-          cookies: { send: true, store: true }
-          rebuildPath: true
-
-      - url: "{{ base_url }}/api/devices/{{ device_db_id }}/revoke"
-        name: POST /devices/:id/revoke — revoke token
-        meta:
-          id: req_devices_revoke
-          created: 1780200000000
-          modified: 1780200000000
-          isPrivate: false
-          description: "Clears the device token. Device can no longer send data until re-registered."
-          sortKey: -307
-        method: POST
-        headers:
-          - name: Authorization
-            value: "Bearer {{ jwt_token }}"
-        settings:
-          renderRequestBody: true
-          encodeUrl: true
-          followRedirects: global
-          cookies: { send: true, store: true }
-          rebuildPath: true
-
-      - url: "{{ base_url }}/api/devices/{{ device_db_id }}/regen-code"
-        name: POST /devices/:id/regen-code — new registration code
-        meta:
-          id: req_devices_regen
-          created: 1780200000000
-          modified: 1780200000000
-          isPrivate: false
-          description: "Generates a fresh 8-char code valid for 24h. Copy registration_code from response."
-          sortKey: -306
-        method: POST
-        headers:
           - name: Authorization
             value: "Bearer {{ jwt_token }}"
         settings:

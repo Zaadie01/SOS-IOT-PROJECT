@@ -1,15 +1,24 @@
 import { useState, useEffect, useCallback } from 'react';
-import {
-    fetchDevices, createDevice, renameDevice, deleteDevice,
-    revokeDevice, regenDeviceCode,
-} from '../services/api';
+import { fetchDevices, createDevice, renameDevice, deleteDevice } from '../services/api';
 
-function CodeBadge({ code, expiresAt }) {
-    if (!code) return <span className="badge badge-ok">Registered</span>;
-    const expired = expiresAt && Date.now() > expiresAt;
+const STATUS_LABELS = {
+    pending:  { text: 'Pending',  color: '#888' },
+    online:   { text: 'Online',   color: '#22c55e' },
+    offline:  { text: 'Offline',  color: '#ef4444' },
+    warning:  { text: 'Warning',  color: '#f59e0b' },
+};
+
+function StatusBadge({ status }) {
+    const s = STATUS_LABELS[status] || STATUS_LABELS.offline;
     return (
-        <span className={`badge ${expired ? 'badge-warn' : 'badge-code'}`}>
-            {expired ? 'Code expired' : `Code: ${code}`}
+        <span style={{
+            display: 'inline-flex', alignItems: 'center', gap: 5,
+            fontWeight: 600, fontSize: '0.85rem', color: s.color,
+        }}>
+            <span style={{
+                width: 8, height: 8, borderRadius: '50%', background: s.color,
+            }} />
+            {s.text}
         </span>
     );
 }
@@ -24,22 +33,19 @@ export default function DevicesPage() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
 
-    // Add modal
     const [showAdd, setShowAdd] = useState(false);
     const [addName, setAddName] = useState('');
     const [addLoading, setAddLoading] = useState(false);
-    const [newCode, setNewCode] = useState(null); // { id, name, registration_code, expires_at }
+    const [newCode, setNewCode] = useState(null);
 
-    // Edit modal
-    const [editDevice, setEditDevice] = useState(null); // { id, name }
+    const [editDevice, setEditDevice] = useState(null);
     const [editName, setEditName] = useState('');
     const [editLoading, setEditLoading] = useState(false);
 
     const load = useCallback(async () => {
         setLoading(true);
         try {
-            const data = await fetchDevices();
-            setDevices(data);
+            setDevices(await fetchDevices());
         } catch (err) {
             setError(err.message);
         } finally {
@@ -80,30 +86,9 @@ export default function DevicesPage() {
     }
 
     async function handleDelete(device) {
-        if (!window.confirm(`Delete "${device.name || device.gateway_id}"? This also removes all its SOS history.`)) return;
+        if (!window.confirm(`Delete "${device.name}"? This also removes all its SOS history.`)) return;
         try {
             await deleteDevice(device.id);
-            load();
-        } catch (err) {
-            setError(err.message);
-        }
-    }
-
-    async function handleRevoke(device) {
-        if (!window.confirm(`Revoke token for "${device.name || device.gateway_id}"? The device will stop sending data.`)) return;
-        try {
-            await revokeDevice(device.id);
-            load();
-        } catch (err) {
-            setError(err.message);
-        }
-    }
-
-    async function handleRegenCode(device) {
-        if (!window.confirm(`Generate a new registration code for "${device.name || device.gateway_id}"?`)) return;
-        try {
-            const result = await regenDeviceCode(device.id);
-            setNewCode({ ...device, ...result });
             load();
         } catch (err) {
             setError(err.message);
@@ -119,15 +104,12 @@ export default function DevicesPage() {
 
             {error && <p className="error-msg">{error}</p>}
 
-            {/* New registration code banner */}
             {newCode && (
                 <div className="code-banner">
                     <strong>Device "{newCode.name}" created!</strong>
                     <p>Enter this code on your device firmware to register it:</p>
                     <code className="reg-code">{newCode.registration_code}</code>
-                    <p className="code-expiry">
-                        Expires: {formatTime(newCode.expires_at)} — code is one-time use
-                    </p>
+                    <p className="code-expiry">Expires: {formatTime(newCode.expires_at)} — one-time use</p>
                     <button className="btn-secondary" onClick={() => setNewCode(null)}>Dismiss</button>
                 </div>
             )}
@@ -143,7 +125,6 @@ export default function DevicesPage() {
                     <thead>
                         <tr>
                             <th>Name</th>
-                            <th>Gateway ID</th>
                             <th>Status</th>
                             <th>Last seen</th>
                             <th>Warning</th>
@@ -154,25 +135,13 @@ export default function DevicesPage() {
                         {devices.map(d => (
                             <tr key={d.id}>
                                 <td>{d.name || '—'}</td>
-                                <td><code>{d.gateway_id?.startsWith('pending-') ? '(pending)' : (d.gateway_id || '—')}</code></td>
-                                <td>
-                                    <CodeBadge code={d.registration_code} expiresAt={d.reg_code_expires_at} />
-                                </td>
+                                <td><StatusBadge status={d.status} /></td>
                                 <td>{formatTime(d.last_seen_at)}</td>
                                 <td>{d.warning || '—'}</td>
                                 <td className="actions-cell">
                                     <button className="btn-sm" onClick={() => { setEditDevice(d); setEditName(d.name || ''); }}>
                                         Rename
                                     </button>
-                                    {d.is_registered ? (
-                                        <button className="btn-sm btn-warn" onClick={() => handleRevoke(d)}>
-                                            Revoke
-                                        </button>
-                                    ) : (
-                                        <button className="btn-sm" onClick={() => handleRegenCode(d)}>
-                                            New code
-                                        </button>
-                                    )}
                                     <button className="btn-sm btn-danger" onClick={() => handleDelete(d)}>
                                         Delete
                                     </button>
@@ -183,7 +152,6 @@ export default function DevicesPage() {
                 </table>
             )}
 
-            {/* Add device modal */}
             {showAdd && (
                 <div className="modal-overlay">
                     <div className="modal">
@@ -202,9 +170,7 @@ export default function DevicesPage() {
                                 />
                             </label>
                             <div className="modal-actions">
-                                <button type="button" className="btn-secondary" onClick={() => setShowAdd(false)}>
-                                    Cancel
-                                </button>
+                                <button type="button" className="btn-secondary" onClick={() => setShowAdd(false)}>Cancel</button>
                                 <button type="submit" className="btn-primary" disabled={addLoading}>
                                     {addLoading ? 'Creating…' : 'Create'}
                                 </button>
@@ -214,7 +180,6 @@ export default function DevicesPage() {
                 </div>
             )}
 
-            {/* Edit device modal */}
             {editDevice && (
                 <div className="modal-overlay">
                     <div className="modal">
@@ -232,9 +197,7 @@ export default function DevicesPage() {
                                 />
                             </label>
                             <div className="modal-actions">
-                                <button type="button" className="btn-secondary" onClick={() => setEditDevice(null)}>
-                                    Cancel
-                                </button>
+                                <button type="button" className="btn-secondary" onClick={() => setEditDevice(null)}>Cancel</button>
                                 <button type="submit" className="btn-primary" disabled={editLoading}>
                                     {editLoading ? 'Saving…' : 'Save'}
                                 </button>
