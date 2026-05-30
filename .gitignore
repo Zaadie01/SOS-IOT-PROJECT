@@ -29,3 +29,17 @@ yarn-error.log*
 # Build outputs
 dist/
 build/
+
+# Local deploy script — contains server IP and path
+cloud/scripts/local-deploy.sh
+
+# SSL certificates (Cloudflare origin certs etc.)
+cloud/certs/
+
+# SQLite data directory
+cloud/backend/data/
+
+# Compiled firmware binaries
+firmware/*.bin
+firmware/*.hex
+firmware/*.elf
