@@ -9,34 +9,6 @@ meta:
 collection:
 
   # ════════════════════════════════════════════════════════
-  # HEALTH
-  # ════════════════════════════════════════════════════════
-  - name: Health
-    meta:
-      id: fld_health_001
-      created: 1780200000000
-      modified: 1780200000000
-      sortKey: -100
-      description: ""
-    children:
-      - url: "{{ base_url }}/"
-        name: GET / — server status
-        meta:
-          id: req_health_001
-          created: 1780200000000
-          modified: 1780200000000
-          isPrivate: false
-          description: "Returns OK and connected WebSocket client count. No auth required."
-          sortKey: -100
-        method: GET
-        settings:
-          renderRequestBody: true
-          encodeUrl: true
-          followRedirects: global
-          cookies: { send: true, store: true }
-          rebuildPath: true
-
-  # ════════════════════════════════════════════════════════
   # AUTH
   # ════════════════════════════════════════════════════════
   - name: Auth
