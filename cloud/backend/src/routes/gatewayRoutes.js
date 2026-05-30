@@ -1,6 +1,5 @@
 const express = require('express');
 const crypto = require('crypto');
-const { requireAuth } = require('../middleware/auth');
 
 module.exports = function gatewayRoutes(db, broadcast) {
     const router = express.Router();
@@ -82,38 +81,6 @@ module.exports = function gatewayRoutes(db, broadcast) {
         db.prepare('UPDATE gateways SET last_seen_at = ?, warning = ? WHERE id = ?')
           .run(Date.now(), warning, gateway.id);
         res.json({ ok: true });
-    });
-
-    // ── Dashboard views ───────────────────────────────────────────────────────
-
-    router.get('/gateways', requireAuth, (req, res) => {
-        const isAdmin = req.user.role === 'admin';
-        const rows = isAdmin
-            ? db.prepare(`
-                SELECT g.id, g.name, g.owner_id, g.registered_at, g.last_seen_at, g.warning,
-                       CASE WHEN g.token IS NOT NULL THEN 1 ELSE 0 END AS is_registered,
-                       u.email AS owner_email
-                FROM gateways g LEFT JOIN users u ON u.id = g.owner_id
-                ORDER BY g.registered_at DESC
-              `).all()
-            : db.prepare(`
-                SELECT id, name, owner_id, registered_at, last_seen_at, warning,
-                       CASE WHEN token IS NOT NULL THEN 1 ELSE 0 END AS is_registered
-                FROM gateways WHERE owner_id = ?
-                ORDER BY registered_at DESC
-              `).all(req.user.id);
-        res.json({ gateways: rows });
-    });
-
-    router.get('/gateways/:id', requireAuth, (req, res) => {
-        const row = db.prepare(
-            'SELECT id, name, owner_id, registered_at, last_seen_at, warning FROM gateways WHERE id = ?'
-        ).get(req.params.id);
-        if (!row) return res.status(404).json({ error: 'Gateway not found' });
-        if (req.user.role !== 'admin' && row.owner_id !== req.user.id) {
-            return res.status(403).json({ error: 'Forbidden' });
-        }
-        res.json({ gateway: row });
     });
 
     return router;

@@ -26,12 +26,6 @@ export default function Header() {
                 >
                     Devices
                 </NavLink>
-                <NavLink
-                    to="/gateways"
-                    className={({ isActive }) => `nav-tab${isActive ? ' nav-tab-active' : ''}`}
-                >
-                    Gateways
-                </NavLink>
             </nav>
             <div className="header-user">
                 {user && <span className="user-email">{user.email}</span>}

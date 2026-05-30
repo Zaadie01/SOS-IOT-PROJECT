@@ -563,57 +563,6 @@ collection:
           cookies: { send: true, store: true }
           rebuildPath: true
 
-  # ════════════════════════════════════════════════════════
-  # GATEWAYS
-  # ════════════════════════════════════════════════════════
-  - name: Gateways
-    meta:
-      id: fld_gateways_001
-      created: 1780200000000
-      modified: 1780200000000
-      sortKey: -700
-      description: "Admin sees all. Regular user sees only their own."
-    children:
-
-      - url: "{{ base_url }}/api/gateways"
-        name: GET /gateways — list
-        meta:
-          id: req_gw_list
-          created: 1780200000000
-          modified: 1780200000000
-          isPrivate: false
-          description: "Admin: all gateways + owner_email. Regular user: own gateways only."
-          sortKey: -710
-        method: GET
-        headers:
-          - name: Authorization
-            value: "Bearer {{ jwt_token }}"
-        settings:
-          renderRequestBody: true
-          encodeUrl: true
-          followRedirects: global
-          cookies: { send: true, store: true }
-          rebuildPath: true
-
-      - url: "{{ base_url }}/api/gateways/{{ device_db_id }}"
-        name: GET /gateways/:id — single gateway
-        meta:
-          id: req_gw_single
-          created: 1780200000000
-          modified: 1780200000000
-          isPrivate: false
-          description: "Lookup by device integer id. Returns 403 if not the owner."
-          sortKey: -709
-        method: GET
-        headers:
-          - name: Authorization
-            value: "Bearer {{ jwt_token }}"
-        settings:
-          renderRequestBody: true
-          encodeUrl: true
-          followRedirects: global
-          cookies: { send: true, store: true }
-          rebuildPath: true
 
 cookieJar:
   name: Default Jar

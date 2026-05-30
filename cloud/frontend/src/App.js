@@ -6,7 +6,6 @@ import ProtectedRoute from './components/auth/ProtectedRoute';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import DashboardPage from './pages/DashboardPage';
-import GatewaysPage from './pages/GatewaysPage';
 import DevicesPage from './pages/DevicesPage';
 import './App.css';
 
@@ -35,14 +34,6 @@ function AppRoutes() {
                         element={
                             <ProtectedRoute>
                                 <DevicesPage />
-                            </ProtectedRoute>
-                        }
-                    />
-                    <Route
-                        path="/gateways"
-                        element={
-                            <ProtectedRoute>
-                                <GatewaysPage />
                             </ProtectedRoute>
                         }
                     />

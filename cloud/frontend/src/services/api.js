@@ -85,12 +85,3 @@ export async function fetchAlerts() {
     return json.alerts;
 }
 
-export async function fetchGateways() {
-    const json = await apiFetch('/gateways');
-    return json.gateways;
-}
-
-export async function fetchGateway(gatewayId) {
-    const json = await apiFetch(`/gateways/${encodeURIComponent(gatewayId)}`);
-    return json.gateway;
-}
