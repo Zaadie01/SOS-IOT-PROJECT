@@ -35,10 +35,10 @@ module.exports = function authRoutes(db) {
         const hash = bcrypt.hashSync(password, 10);
         const result = db.prepare(
             `INSERT INTO users (email, password_hash, role, display_name, created_at)
-             VALUES (?, ?, 'viewer', ?, ?)`
+             VALUES (?, ?, 'user', ?, ?)`
         ).run(email, hash, name || null, Date.now());
 
-        const user = { id: result.lastInsertRowid, email, role: 'viewer', display_name: name || null };
+        const user = { id: result.lastInsertRowid, email, role: 'user', display_name: name || null };
         res.status(201).json({ token: signToken(user), user: safeUser(user) });
     });
 

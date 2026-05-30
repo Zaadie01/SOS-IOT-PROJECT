@@ -75,7 +75,7 @@ module.exports = function initPassport(db) {
                     // New account via Google
                     const result = db.prepare(
                         `INSERT INTO users (email, password_hash, role, display_name, google_id, created_at)
-                         VALUES (?, '', 'viewer', ?, ?, ?)`
+                         VALUES (?, '', 'user', ?, ?, ?)`
                     ).run(email, displayName, googleId, Date.now());
 
                     user = db.prepare(

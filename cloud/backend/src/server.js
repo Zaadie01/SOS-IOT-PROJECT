@@ -10,7 +10,6 @@ const session = require('express-session');
 const passport = require('passport');
 const Database = require('better-sqlite3');
 const { WebSocketServer } = require('ws');
-const bcrypt = require('bcryptjs');
 
 const initPassport = require('./auth/passport');
 const authRoutes = require('./routes/authRoutes');
@@ -118,6 +117,8 @@ function initDatabase(database) {
     // Migrations for existing installs
     try { database.exec(`ALTER TABLE users ADD COLUMN display_name TEXT`); } catch (_) {}
     try { database.exec(`ALTER TABLE users ADD COLUMN google_id TEXT`); } catch (_) {}
+    // Rename role 'viewer' → 'user'
+    try { database.exec(`UPDATE users SET role = 'user' WHERE role = 'viewer'`); } catch (_) {}
 
     migrateGatewaysTable(database);
 
@@ -144,7 +145,6 @@ function initDatabase(database) {
         `);
     } catch (_) {}
 
-    seedAdminUser(database);
 }
 
 function migrateGatewaysTable(database) {
@@ -193,15 +193,3 @@ function migrateGatewaysTable(database) {
     console.log('[MIGRATION] gateways v3 done');
 }
 
-function seedAdminUser(database) {
-    const { ADMIN_EMAIL, ADMIN_PASSWORD } = process.env;
-    if (!ADMIN_EMAIL || !ADMIN_PASSWORD) {
-        console.warn('[SEED] ADMIN_EMAIL or ADMIN_PASSWORD not set — skipping admin seed');
-        return;
-    }
-    if (database.prepare('SELECT id FROM users WHERE email = ?').get(ADMIN_EMAIL)) return;
-    database.prepare(
-        `INSERT INTO users (email, password_hash, role, created_at) VALUES (?, ?, 'admin', ?)`
-    ).run(ADMIN_EMAIL, bcrypt.hashSync(ADMIN_PASSWORD, 10), Date.now());
-    console.log(`[SEED] Admin user created: ${ADMIN_EMAIL}`);
-}

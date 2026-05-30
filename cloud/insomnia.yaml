@@ -623,14 +623,14 @@ collection:
           cookies: { send: true, store: true }
           rebuildPath: true
 
-      - url: "{{ base_url }}/api/gateways/{{ gateway_id }}"
+      - url: "{{ base_url }}/api/gateways/{{ device_db_id }}"
         name: GET /gateways/:id — single gateway
         meta:
           id: req_gw_single
           created: 1780200000000
           modified: 1780200000000
           isPrivate: false
-          description: "Lookup by gateway_id string. Returns 403 if not the owner."
+          description: "Lookup by device integer id. Returns 403 if not the owner."
           sortKey: -709
         method: GET
         headers:
