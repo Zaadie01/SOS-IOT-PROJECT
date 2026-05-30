@@ -57,9 +57,9 @@ module.exports = function deviceRoutes(db) {
 
         const result = db.prepare(`
             INSERT INTO gateways
-                (gateway_id, owner_id, name, registration_code, reg_code_expires_at, registered_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-        `).run(`pending-${code}`, req.user.id, name.trim(), code, expiresAt, Date.now());
+                (owner_id, name, registration_code, reg_code_expires_at, registered_at)
+            VALUES (?, ?, ?, ?, ?)
+        `).run(req.user.id, name.trim(), code, expiresAt, Date.now());
 
         res.status(201).json({
             id: result.lastInsertRowid,
@@ -87,11 +87,11 @@ module.exports = function deviceRoutes(db) {
     // Delete device and all its SOS history
     router.delete('/:id', (req, res) => {
         const device = db.prepare(
-            'SELECT id, gateway_id FROM gateways WHERE id = ? AND owner_id = ?'
+            'SELECT id FROM gateways WHERE id = ? AND owner_id = ?'
         ).get(req.params.id, req.user.id);
         if (!device) return res.status(404).json({ error: 'Device not found' });
 
-        db.prepare('DELETE FROM sos_events WHERE gateway_id = ?').run(device.gateway_id);
+        db.prepare('DELETE FROM sos_events WHERE device_db_id = ?').run(device.id);
         db.prepare('DELETE FROM gateways WHERE id = ?').run(device.id);
         res.json({ ok: true });
     });

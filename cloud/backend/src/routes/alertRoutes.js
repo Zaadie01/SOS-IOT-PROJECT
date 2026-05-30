@@ -14,7 +14,7 @@ module.exports = function alertRoutes(db) {
                     SELECT se.id, se.timestamp, se.button_pressed, se.synced_at,
                            g.name AS device_name
                     FROM sos_events se
-                    INNER JOIN gateways g ON g.gateway_id = se.gateway_id
+                    INNER JOIN gateways g ON g.id = se.device_db_id
                     WHERE g.owner_id = ? AND g.id = ?
                     ORDER BY se.timestamp DESC
                   `).all(req.user.id, device_id)
@@ -22,7 +22,7 @@ module.exports = function alertRoutes(db) {
                     SELECT se.id, se.timestamp, se.button_pressed, se.synced_at,
                            g.name AS device_name
                     FROM sos_events se
-                    INNER JOIN gateways g ON g.gateway_id = se.gateway_id
+                    INNER JOIN gateways g ON g.id = se.device_db_id
                     WHERE g.owner_id = ?
                     ORDER BY se.timestamp DESC
                   `).all(req.user.id);
