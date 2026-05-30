@@ -61,6 +61,20 @@ function broadcast(data) {
     wss.clients.forEach(c => { if (c.readyState === 1) c.send(msg); });
 }
 
+// ── Cleanup expired unactivated device slots ──────────────────────────────────
+function cleanupExpiredDevices() {
+    const { changes } = db.prepare(`
+        DELETE FROM gateways
+        WHERE registration_code IS NOT NULL
+          AND reg_code_expires_at < ?
+          AND token IS NULL
+    `).run(Date.now());
+    if (changes > 0) console.log(`[CLEANUP] Deleted ${changes} expired unactivated device(s)`);
+}
+
+cleanupExpiredDevices();
+setInterval(cleanupExpiredDevices, 60 * 60 * 1000); // every hour
+
 // ── Routes ────────────────────────────────────────────────────────────────────
 app.get('/', (_req, res) => res.json({
     status: 'OK',
