@@ -24,7 +24,7 @@ module.exports = function deviceRoutes(db) {
     // List user's devices with computed status
     router.get('/', (req, res) => {
         const rows = db.prepare(`
-            SELECT id, gateway_id, device_id, name, registration_code,
+            SELECT id, name, registration_code,
                    reg_code_expires_at, registered_at, last_seen_at, warning, token
             FROM gateways
             WHERE owner_id = ?
