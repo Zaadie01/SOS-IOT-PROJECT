@@ -121,30 +121,50 @@ function initDatabase(database) {
     try { database.exec(`UPDATE users SET role = 'user' WHERE role = 'viewer'`); } catch (_) {}
 
     migrateGatewaysTable(database);
+    migrateSosEventsTable(database);
 
-    // sos_events — device_db_id is the FK to gateways.id
+}
+
+function migrateSosEventsTable(database) {
+    const cols = database.prepare('PRAGMA table_info(sos_events)').all();
+
+    if (cols.length === 0) {
+        database.exec(`
+            CREATE TABLE sos_events (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp      INTEGER NOT NULL,
+                button_pressed INTEGER,
+                device_db_id   INTEGER,
+                synced_at      INTEGER
+            )
+        `);
+        return;
+    }
+
+    // Add device_db_id if missing
+    if (!cols.some(c => c.name === 'device_db_id')) {
+        try { database.exec(`ALTER TABLE sos_events ADD COLUMN device_db_id INTEGER`); } catch (_) {}
+    }
+
+    // Recreate table if old NOT NULL columns still exist
+    const hasNotNull = cols.some(c => (c.name === 'device_id' || c.name === 'gateway_id') && c.notnull === 1);
+    if (!hasNotNull) return;
+
+    console.log('[MIGRATION] Upgrading sos_events table...');
     database.exec(`
-        CREATE TABLE IF NOT EXISTS sos_events (
+        CREATE TABLE sos_events_v2 (
             id             INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp      INTEGER NOT NULL,
             button_pressed INTEGER,
             device_db_id   INTEGER,
             synced_at      INTEGER
-        )
+        );
+        INSERT INTO sos_events_v2 (id, timestamp, button_pressed, device_db_id, synced_at)
+            SELECT id, timestamp, button_pressed, device_db_id, synced_at FROM sos_events;
+        DROP TABLE sos_events;
+        ALTER TABLE sos_events_v2 RENAME TO sos_events;
     `);
-    try { database.exec(`ALTER TABLE sos_events ADD COLUMN device_db_id INTEGER`); } catch (_) {}
-
-    // Backfill device_db_id for old events that used gateway_id string
-    try {
-        database.exec(`
-            UPDATE sos_events
-            SET device_db_id = (
-                SELECT g.id FROM gateways g WHERE g.gateway_id = sos_events.gateway_id
-            )
-            WHERE device_db_id IS NULL AND gateway_id IS NOT NULL
-        `);
-    } catch (_) {}
-
+    console.log('[MIGRATION] sos_events upgraded');
 }
 
 function migrateGatewaysTable(database) {
