@@ -119,45 +119,41 @@ function initDatabase(database) {
     try { database.exec(`ALTER TABLE users ADD COLUMN display_name TEXT`); } catch (_) {}
     try { database.exec(`ALTER TABLE users ADD COLUMN google_id TEXT`); } catch (_) {}
 
-    // Gateways — check if schema needs upgrading (token was NOT NULL in old version)
     migrateGatewaysTable(database);
 
+    // sos_events — device_db_id is the FK to gateways.id
     database.exec(`
         CREATE TABLE IF NOT EXISTS sos_events (
             id             INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp      INTEGER NOT NULL,
-            device_id      TEXT NOT NULL,
             button_pressed INTEGER,
-            gateway_id     TEXT,
+            device_db_id   INTEGER,
             synced_at      INTEGER
         )
     `);
+    try { database.exec(`ALTER TABLE sos_events ADD COLUMN device_db_id INTEGER`); } catch (_) {}
 
-    database.exec(`
-        CREATE TABLE IF NOT EXISTS invites (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            token      TEXT UNIQUE NOT NULL,
-            created_by INTEGER NOT NULL,
-            email      TEXT,
-            expires_at INTEGER NOT NULL,
-            used_at    INTEGER,
-            used_by    INTEGER
-        )
-    `);
+    // Backfill device_db_id for old events that used gateway_id string
+    try {
+        database.exec(`
+            UPDATE sos_events
+            SET device_db_id = (
+                SELECT g.id FROM gateways g WHERE g.gateway_id = sos_events.gateway_id
+            )
+            WHERE device_db_id IS NULL AND gateway_id IS NOT NULL
+        `);
+    } catch (_) {}
 
     seedAdminUser(database);
 }
 
 function migrateGatewaysTable(database) {
-    const cols = database.prepare('PRAGMA table_info(gateways)').all();
+    const cols = database.prepare('PRAGMA table_info(gateways)').all().map(c => c.name);
 
     if (cols.length === 0) {
-        // Fresh install — create with the correct schema right away
         database.exec(`
             CREATE TABLE gateways (
                 id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-                gateway_id          TEXT UNIQUE,
-                device_id           TEXT,
                 name                TEXT,
                 owner_id            INTEGER,
                 token               TEXT UNIQUE,
@@ -171,17 +167,14 @@ function migrateGatewaysTable(database) {
         return;
     }
 
-    const hasOwner = cols.some(c => c.name === 'owner_id');
-    const tokenNotNull = cols.find(c => c.name === 'token')?.notnull === 1;
+    // Already clean schema
+    if (!cols.includes('gateway_id')) return;
 
-    if (hasOwner && !tokenNotNull) return; // already up to date
-
-    console.log('[MIGRATION] Upgrading gateways table...');
+    // Migrate: remove gateway_id and device_id columns
+    console.log('[MIGRATION] Upgrading gateways table to v3 (removing gateway_id/device_id)...');
     database.exec(`
-        CREATE TABLE gateways_v2 (
+        CREATE TABLE gateways_v3 (
             id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-            gateway_id          TEXT UNIQUE,
-            device_id           TEXT,
             name                TEXT,
             owner_id            INTEGER,
             token               TEXT UNIQUE,
@@ -191,13 +184,13 @@ function migrateGatewaysTable(database) {
             last_seen_at        INTEGER,
             warning             TEXT
         );
-        INSERT INTO gateways_v2 (id, gateway_id, device_id, token, registered_at, last_seen_at, warning)
-            SELECT id, gateway_id, device_id, token, registered_at, last_seen_at, warning
+        INSERT INTO gateways_v3 (id, name, owner_id, token, registration_code, reg_code_expires_at, registered_at, last_seen_at, warning)
+            SELECT id, name, owner_id, token, registration_code, reg_code_expires_at, registered_at, last_seen_at, warning
             FROM gateways;
         DROP TABLE gateways;
-        ALTER TABLE gateways_v2 RENAME TO gateways;
+        ALTER TABLE gateways_v3 RENAME TO gateways;
     `);
-    console.log('[MIGRATION] gateways table upgraded');
+    console.log('[MIGRATION] gateways v3 done');
 }
 
 function seedAdminUser(database) {

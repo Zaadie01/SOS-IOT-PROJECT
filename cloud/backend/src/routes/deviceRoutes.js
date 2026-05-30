@@ -33,8 +33,6 @@ module.exports = function deviceRoutes(db) {
 
         const devices = rows.map(d => ({
             id: d.id,
-            gateway_id: d.gateway_id?.startsWith('pending-') ? null : d.gateway_id,
-            device_id: d.device_id,
             name: d.name,
             registration_code: d.registration_code,
             reg_code_expires_at: d.reg_code_expires_at,

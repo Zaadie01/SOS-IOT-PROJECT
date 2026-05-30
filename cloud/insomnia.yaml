@@ -331,15 +331,13 @@ collection:
           created: 1780200000000
           modified: 1780200000000
           isPrivate: false
-          description: "Firmware registers using registration_code. Returns token — copy into gateway_token."
+          description: "Firmware sends only registration_code. Returns token (copy → gateway_token) and device_id (DB integer)."
           sortKey: -410
         method: POST
         body:
           mimeType: application/json
           text: |-
             {
-              "gateway_id": "{{ gateway_id }}",
-              "device_id": "{{ device_id }}",
               "registration_code": "{{ registration_code }}"
             }
         headers:
@@ -366,7 +364,6 @@ collection:
           mimeType: application/json
           text: |-
             {
-              "gateway_id": "{{ gateway_id }}",
               "registration_code": "BADCODE1"
             }
         headers:
@@ -482,42 +479,8 @@ collection:
           text: |-
             {
               "timestamp": 1711929600000,
-              "device_id": "{{ device_id }}",
               "button_pressed": 3,
-              "gateway_id": "{{ gateway_id }}",
               "sos_alert": true
-            }
-        headers:
-          - name: Content-Type
-            value: application/json
-          - name: x-gateway-token
-            value: "{{ gateway_token }}"
-        settings:
-          renderRequestBody: true
-          encodeUrl: true
-          followRedirects: global
-          cookies: { send: true, store: true }
-          rebuildPath: true
-
-      - url: "{{ base_url }}/api/gateway/data"
-        name: POST /gateway/data — non-SOS (ignored)
-        meta:
-          id: req_data_nosos
-          created: 1780200000000
-          modified: 1780200000000
-          isPrivate: false
-          description: "sos_alert: false — server acknowledges but does not store."
-          sortKey: -509
-        method: POST
-        body:
-          mimeType: application/json
-          text: |-
-            {
-              "timestamp": 1711929600000,
-              "device_id": "{{ device_id }}",
-              "button_pressed": 0,
-              "gateway_id": "{{ gateway_id }}",
-              "sos_alert": false
             }
         headers:
           - name: Content-Type
@@ -546,8 +509,7 @@ collection:
           text: |-
             {
               "timestamp": 1711929600000,
-              "device_id": "{{ device_id }}",
-              "gateway_id": "{{ gateway_id }}",
+              "button_pressed": 1,
               "sos_alert": true
             }
         headers:
@@ -573,14 +535,34 @@ collection:
     children:
 
       - url: "{{ base_url }}/api/alerts/sos"
-        name: GET /alerts/sos ✅ my history
+        name: GET /alerts/sos ✅ all my alerts
         meta:
           id: req_alerts_list
           created: 1780200000000
           modified: 1780200000000
           isPrivate: false
-          description: "Returns alerts from the current user's devices only, newest first."
+          description: "All alerts from the current user's devices. Each alert includes device_name. Newest first."
           sortKey: -610
+        method: GET
+        headers:
+          - name: Authorization
+            value: "Bearer {{ jwt_token }}"
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+      - url: "{{ base_url }}/api/alerts/sos?device_id={{ device_db_id }}"
+        name: GET /alerts/sos?device_id=:id ✅ filter by device
+        meta:
+          id: req_alerts_by_device
+          created: 1780200000000
+          modified: 1780200000000
+          isPrivate: false
+          description: "Filter SOS history for one specific device. device_db_id = integer id from GET /devices."
+          sortKey: -609
         method: GET
         headers:
           - name: Authorization
@@ -684,6 +666,3 @@ environments:
     registration_code: ""
     # After POST /gateway/register — paste token
     gateway_token: ""
-    # Firmware identifiers (change as needed)
-    gateway_id: "esp32-test-001"
-    device_id: "sos-button-01"
