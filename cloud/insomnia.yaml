@@ -450,8 +450,6 @@ collection:
           mimeType: application/json
           text: |-
             {
-              "timestamp": 1711929600000,
-              "button_pressed": 3,
               "sos_alert": true
             }
         headers:

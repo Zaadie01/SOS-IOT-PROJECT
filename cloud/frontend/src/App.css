@@ -4,6 +4,11 @@ body {
   color: #1e293b;
 }
 
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
 /* ── Auth pages ──────────────────────────────────────────────────────────────── */
 .auth-wrapper {
   min-height: 100vh;

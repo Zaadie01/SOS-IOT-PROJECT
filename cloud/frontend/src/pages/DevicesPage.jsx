@@ -2,204 +2,59 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Icon from '@mdi/react';
 import {
-    mdiPlus, mdiPencilOutline, mdiTrashCanOutline, mdiContentCopy, mdiCheck,
-    mdiDevices, mdiCheckCircle, mdiCloseCircle, mdiAlertOutline, mdiClockOutline,
-    mdiMagnify, mdiSort, mdiAlertCircleOutline,
+    mdiPlus, mdiPencilOutline, mdiTrashCanOutline,
+    mdiDevices, mdiAlertOutline, mdiAlertCircleOutline,
+    mdiMagnify, mdiSort, mdiRefresh,
 } from '@mdi/js';
-import { fetchDevices, createDevice, renameDevice, deleteDevice } from '../services/api';
+import { fetchDevices, createDevice, renameDevice, deleteDevice } from '../api';
+import StatusBadge from '../components/common/StatusBadge';
+import DeviceModal from '../components/devices/DeviceModal';
+import CodeBanner  from '../components/devices/CodeBanner';
+import { formatTime } from '../utils/time';
 
-const STATUS_CONFIG = {
-    pending: { label: 'Pending', cls: 'badge-pending', icon: mdiClockOutline },
-    online:  { label: 'Online',  cls: 'badge-online',  icon: mdiCheckCircle  },
-    offline: { label: 'Offline', cls: 'badge-offline', icon: mdiCloseCircle  },
-    warning: { label: 'Warning', cls: 'badge-warning', icon: mdiAlertOutline },
-};
-
-function StatusBadge({ status }) {
-    const cfg     = STATUS_CONFIG[status] || STATUS_CONFIG.offline;
-    const tooltip = status === 'pending'
-        ? 'Waiting for firmware registration. Use the registration code to connect the gateway.'
-        : undefined;
-    return (
-        <span
-            className={`badge ${cfg.cls} d-inline-flex align-items-center gap-1`}
-            title={tooltip}
-            style={tooltip ? { cursor: 'help' } : undefined}
-        >
-            <Icon path={cfg.icon} size={0.55} />
-            {cfg.label}
-        </span>
-    );
-}
-
-function formatTime(ms) {
-    if (!ms) return '—';
-    const d = new Date(ms);
-    const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    const date = d.toLocaleDateString([], { day: '2-digit', month: '2-digit', year: 'numeric' });
-    return `${time}, ${date}`;
-}
-
-// ── Copy button ───────────────────────────────────────────────────────────────
-function CopyButton({ text }) {
-    const [copied, setCopied] = useState(false);
-    function handleCopy() {
-        navigator.clipboard.writeText(text);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-    }
-    return (
-        <button className={`btn btn-sm ${copied ? 'btn-success' : 'btn-outline-secondary'}`} onClick={handleCopy}>
-            <Icon path={copied ? mdiCheck : mdiContentCopy} size={0.7} className="me-1" />
-            {copied ? 'Copied!' : 'Copy'}
-        </button>
-    );
-}
-
-// ── Device Modal (Add / Rename / Delete / Show code) ──────────────────────────
-function DeviceModal({ mode, device, onSave, onDelete, onClose }) {
-    const [name, setName]    = useState(device?.name || '');
-    const [loading, setLoad] = useState(false);
-    const [error, setError]  = useState('');
-
-    async function handleSubmit(e) {
-        e.preventDefault();
-        setLoad(true);
-        setError('');
-        try { await onSave(name.trim()); }
-        catch (err) { setError(err.message); setLoad(false); }
-    }
-
-    async function handleDelete() {
-        setLoad(true);
-        try { await onDelete(); }
-        catch (err) { setError(err.message); setLoad(false); }
-    }
-
-    if (mode === 'code') {
-        return (
-            <div className="modal d-block" style={{ background: 'rgba(0,0,0,0.4)' }}>
-                <div className="modal-dialog modal-dialog-centered">
-                    <div className="modal-content">
-                        <div className="modal-header border-0 pb-0">
-                            <h6 className="modal-title fw-semibold">Registration Code</h6>
-                            <button type="button" className="btn-close" onClick={onClose} />
-                        </div>
-                        <div className="modal-body">
-                            <p className="text-muted small mb-3">
-                                Enter this code on your firmware to register <strong>{device.name}</strong>.
-                            </p>
-                            <div className="d-flex align-items-center gap-2 mb-2">
-                                <code className="fs-4 bg-light px-3 py-2 rounded border flex-grow-1 text-center">
-                                    {device.registration_code}
-                                </code>
-                                <CopyButton text={device.registration_code} />
-                            </div>
-                            <p className="text-muted small mb-0">
-                                Expires: {formatTime(device.reg_code_expires_at)} — one-time use
-                            </p>
-                        </div>
-                        <div className="modal-footer border-0 pt-0">
-                            <button className="btn btn-light btn-sm" onClick={onClose}>Close</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        );
-    }
-
-    if (mode === 'delete') {
-        return (
-            <div className="modal d-block" style={{ background: 'rgba(0,0,0,0.4)' }}>
-                <div className="modal-dialog modal-dialog-centered">
-                    <div className="modal-content">
-                        <div className="modal-header border-0 pb-0">
-                            <h6 className="modal-title fw-semibold">Delete Device</h6>
-                            <button type="button" className="btn-close" onClick={onClose} />
-                        </div>
-                        <div className="modal-body">
-                            {error && <div className="alert alert-danger py-2 small">{error}</div>}
-                            <p className="mb-0">
-                                Delete <strong>{device.name}</strong>? All SOS history for this device will be removed.
-                            </p>
-                        </div>
-                        <div className="modal-footer border-0 pt-0">
-                            <button className="btn btn-light btn-sm" onClick={onClose}>Cancel</button>
-                            <button className="btn btn-danger btn-sm" onClick={handleDelete} disabled={loading}>
-                                {loading ? 'Deleting…' : 'Delete'}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        );
-    }
-
-    return (
-        <div className="modal d-block" style={{ background: 'rgba(0,0,0,0.4)' }}>
-            <div className="modal-dialog modal-dialog-centered">
-                <div className="modal-content">
-                    <div className="modal-header border-0 pb-0">
-                        <h6 className="modal-title fw-semibold">
-                            {mode === 'add' ? 'Add Device' : 'Rename Device'}
-                        </h6>
-                        <button type="button" className="btn-close" onClick={onClose} />
-                    </div>
-                    <form onSubmit={handleSubmit}>
-                        <div className="modal-body">
-                            {error && <div className="alert alert-danger py-2 small">{error}</div>}
-                            <label className="form-label small fw-medium">Device name</label>
-                            <input
-                                type="text"
-                                className="form-control"
-                                value={name}
-                                onChange={e => setName(e.target.value)}
-                                required
-                                autoFocus
-                                maxLength={50}
-                                placeholder="e.g. Office SOS Button"
-                            />
-                        </div>
-                        <div className="modal-footer border-0 pt-0">
-                            <button type="button" className="btn btn-light btn-sm" onClick={onClose}>Cancel</button>
-                            <button type="submit" className="btn btn-primary btn-sm" disabled={loading}>
-                                {loading ? 'Saving…' : mode === 'add' ? 'Create' : 'Save'}
-                            </button>
-                        </div>
-                    </form>
-                </div>
-            </div>
-        </div>
-    );
-}
-
-// ── Main page ─────────────────────────────────────────────────────────────────
 export default function DevicesPage() {
-    const navigate              = useNavigate();
-    const [devices, setDevices] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError]     = useState('');
-    const [showBanner, setBanner] = useState(false);
-    const [modal, setModal]     = useState(null);
-    const [search, setSearch]         = useState('');
-    const [sort, setSort]             = useState('id-desc');
-    const [statusFilter, setStatus]   = useState('any');
+    const navigate = useNavigate();
 
-    const load = useCallback(async () => {
+    const [devices, setDevices]         = useState([]);
+    const [loading, setLoading]         = useState(true);   // true only on the very first load
+    const [isRefreshing, setRefreshing] = useState(false);  // true during manual/auto refresh
+    const [error, setError]             = useState('');
+    const [showCreatedBanner, setBanner] = useState(false);
+    const [activeModal, setModal]     = useState(null); // { mode, device? }
+    const [search, setSearch]         = useState('');
+    const [sortOrder, setSortOrder]   = useState('id-desc');
+    const [statusFilter, setStatusFilter] = useState('any');
+
+    const loadDevices = useCallback(async () => {
         try { setDevices(await fetchDevices()); }
         catch (err) { setError(err.message); }
         finally { setLoading(false); }
     }, []);
 
-    useEffect(() => { load(); }, [load]);
+    // Initial load
+    useEffect(() => { loadDevices(); }, [loadDevices]);
 
-    const displayed = useMemo(() => {
+    // Auto-refresh every 15 s — keeps status/last-ping in sync without a page reload
+    useEffect(() => {
+        const timer = setInterval(loadDevices, 15_000);
+        return () => clearInterval(timer);
+    }, [loadDevices]);
+
+    async function handleRefresh() {
+        setRefreshing(true);
+        try { await loadDevices(); }
+        finally { setRefreshing(false); }
+    }
+
+    // ── Filtering & sorting ───────────────────────────────────────────────────
+
+    const visibleDevices = useMemo(() => {
         let list = [...devices];
 
         if (search.trim()) {
-            const q = search.toLowerCase();
+            const query = search.toLowerCase();
             list = list.filter(d =>
-                d.name?.toLowerCase().includes(q) || String(d.id).includes(q)
+                d.name?.toLowerCase().includes(query) || String(d.id).includes(query)
             );
         }
 
@@ -208,57 +63,76 @@ export default function DevicesPage() {
         }
 
         list.sort((a, b) => {
-            if (sort === 'id-desc')   return b.id - a.id;
-            if (sort === 'id-asc')    return a.id - b.id;
-            if (sort === 'name-asc')  return (a.name || '').localeCompare(b.name || '');
-            if (sort === 'name-desc') return (b.name || '').localeCompare(a.name || '');
+            if (sortOrder === 'id-desc')   return b.id - a.id;
+            if (sortOrder === 'id-asc')    return a.id - b.id;
+            if (sortOrder === 'name-asc')  return (a.name || '').localeCompare(b.name || '');
+            if (sortOrder === 'name-desc') return (b.name || '').localeCompare(a.name || '');
             return 0;
         });
+
         return list;
-    }, [devices, search, sort, statusFilter]);
+    }, [devices, search, sortOrder, statusFilter]);
+
+    // ── Modal handlers ────────────────────────────────────────────────────────
 
     async function handleAdd(name) {
         await createDevice(name);
         setBanner(true);
         setModal(null);
-        load();
+        loadDevices();
     }
 
     async function handleRename(name) {
-        await renameDevice(modal.device.id, name);
+        await renameDevice(activeModal.device.id, name);
         setModal(null);
-        load();
+        loadDevices();
     }
 
     async function handleDelete() {
-        await deleteDevice(modal.device.id);
+        await deleteDevice(activeModal.device.id);
         setModal(null);
-        load();
+        loadDevices();
     }
+
+    // ── Render ────────────────────────────────────────────────────────────────
 
     return (
         <div className="container py-4">
-            {/* Header */}
+
+            {/* Page header */}
             <div className="d-flex align-items-center justify-content-between mb-3">
                 <h5 className="fw-bold mb-0">My Devices</h5>
-                <button className="btn btn-primary btn-sm d-flex align-items-center gap-1" onClick={() => setModal({ mode: 'add' })}>
-                    <Icon path={mdiPlus} size={0.75} />
-                    Add Device
-                </button>
+                <div className="d-flex gap-2">
+                    <button
+                        className="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1"
+                        onClick={handleRefresh}
+                        disabled={isRefreshing}
+                        title="Refresh device list"
+                    >
+                        <Icon
+                            path={mdiRefresh}
+                            size={0.75}
+                            style={isRefreshing
+                                ? { animation: 'spin 0.7s linear infinite' }
+                                : undefined}
+                        />
+                        Refresh
+                    </button>
+                    <button
+                        className="btn btn-primary btn-sm d-flex align-items-center gap-1"
+                        onClick={() => setModal({ mode: 'add' })}
+                    >
+                        <Icon path={mdiPlus} size={0.75} />
+                        Add Device
+                    </button>
+                </div>
             </div>
 
             {error && <div className="alert alert-danger py-2 small">{error}</div>}
 
-            {showBanner && (
-                <div className="alert alert-success d-flex align-items-center justify-content-between mb-3">
-                    <span>
-                        ✅ <strong>Device created!</strong> Click <strong>Show registration code</strong> on the device card to view the code.
-                    </span>
-                    <button type="button" className="btn-close ms-3" onClick={() => setBanner(false)} />
-                </div>
-            )}
+            {showCreatedBanner && <CodeBanner onDismiss={() => setBanner(false)} />}
 
-            {/* Search & Sort */}
+            {/* Search & sort toolbar */}
             {devices.length > 0 && (
                 <div className="d-flex gap-2 mb-3 flex-wrap">
                     <div className="input-group input-group-sm" style={{ maxWidth: 260 }}>
@@ -278,7 +152,7 @@ export default function DevicesPage() {
                         <span className="input-group-text bg-white">
                             <Icon path={mdiSort} size={0.7} />
                         </span>
-                        <select className="form-select" value={sort} onChange={e => setSort(e.target.value)}>
+                        <select className="form-select" value={sortOrder} onChange={e => setSortOrder(e.target.value)}>
                             <option value="id-desc">Newest first</option>
                             <option value="id-asc">Oldest first</option>
                             <option value="name-asc">Name A → Z</option>
@@ -286,7 +160,12 @@ export default function DevicesPage() {
                         </select>
                     </div>
 
-                    <select className="form-select form-select-sm" style={{ maxWidth: 140 }} value={statusFilter} onChange={e => setStatus(e.target.value)}>
+                    <select
+                        className="form-select form-select-sm"
+                        style={{ maxWidth: 140 }}
+                        value={statusFilter}
+                        onChange={e => setStatusFilter(e.target.value)}
+                    >
                         <option value="any">Any status</option>
                         <option value="online">Online</option>
                         <option value="warning">Warning</option>
@@ -296,7 +175,7 @@ export default function DevicesPage() {
                 </div>
             )}
 
-            {/* Content */}
+            {/* Device grid */}
             {loading ? (
                 <div className="text-center py-5 text-muted">Loading…</div>
             ) : devices.length === 0 ? (
@@ -309,13 +188,13 @@ export default function DevicesPage() {
                         Add Device
                     </button>
                 </div>
-            ) : displayed.length === 0 ? (
+            ) : visibleDevices.length === 0 ? (
                 <div className="empty-state">
                     <p className="small">No devices match "<strong>{search}</strong>"</p>
                 </div>
             ) : (
                 <div className="row g-3">
-                    {displayed.map(device => (
+                    {visibleDevices.map(device => (
                         <div className="col-md-6 col-lg-4" key={device.id}>
                             <div className="card device-card h-100">
                                 <div className="card-body">
@@ -391,11 +270,11 @@ export default function DevicesPage() {
                 </div>
             )}
 
-            {modal && (
+            {activeModal && (
                 <DeviceModal
-                    mode={modal.mode}
-                    device={modal.device}
-                    onSave={modal.mode === 'add' ? handleAdd : handleRename}
+                    mode={activeModal.mode}
+                    device={activeModal.device}
+                    onSave={activeModal.mode === 'add' ? handleAdd : handleRename}
                     onDelete={handleDelete}
                     onClose={() => setModal(null)}
                 />

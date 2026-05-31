@@ -5,20 +5,21 @@ const morgan   = require('morgan');
 const session  = require('express-session');
 const passport = require('./config/passport');
 
-const authRoutes    = require('./routes/auth');
-const deviceRoutes  = require('./routes/devices');
-const gatewayRoutes = require('./routes/gateway');
-const alertRoutes   = require('./routes/alerts');
+const authRoutes    = require('./routes/auth.routes');
+const deviceRoutes  = require('./routes/devices.routes');
+const gatewayRoutes = require('./routes/gateway.routes');
+const alertRoutes   = require('./routes/alerts.routes');
 
 const app = express();
 
 // ── Middleware ────────────────────────────────────────────────────────────────
+
 app.use(helmet());
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 app.use(morgan('combined'));
 
-// Session is only needed for the Google OAuth redirect dance (~10 s)
+// express-session is only needed during the ~10 s Google OAuth redirect dance
 app.use(session({
     secret:            process.env.SESSION_SECRET || 'dev-secret',
     resave:            false,
@@ -30,9 +31,10 @@ app.use(passport.initialize());
 app.use(passport.session());
 
 // ── Routes ────────────────────────────────────────────────────────────────────
+
 app.use('/api/auth',    authRoutes);
 app.use('/api/devices', deviceRoutes);
-app.use('/api',         gatewayRoutes);  // /api/gateway/*
+app.use('/api',         gatewayRoutes); // handles /api/gateway/*
 app.use('/api/alerts',  alertRoutes);
 
 module.exports = app;

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { fetchAlerts } from '../services/api';
+import { fetchAlerts } from '../api';
 
 export function useAlerts(token) {
     const [alerts, setAlerts] = useState([]);
