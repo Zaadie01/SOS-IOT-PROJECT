@@ -1,45 +1,48 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import { useAlerts } from './hooks/useAlerts';
-import Header from './components/layout/Header';
+import Navbar from './components/layout/Navbar';
 import ProtectedRoute from './components/auth/ProtectedRoute';
+import LandingPage from './pages/LandingPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
-import DashboardPage from './pages/DashboardPage';
 import DevicesPage from './pages/DevicesPage';
-import './App.css';
+import AlertsPage from './pages/AlertsPage';
 
 function AppRoutes() {
     const { token } = useAuth();
-    const alerts = useAlerts(token);
+    const { search } = useLocation();
+    const hasOAuthCallback = new URLSearchParams(search).has('token');
 
     return (
-        <div className="app">
-            {token && <Header />}
-            <main>
-                <Routes>
-                    <Route path="/login" element={<LoginPage />} />
-                    <Route path="/register" element={<RegisterPage />} />
-                    <Route path="/" element={<Navigate to="/dashboard" replace />} />
-                    <Route
-                        path="/dashboard"
-                        element={
-                            <ProtectedRoute>
-                                <DashboardPage alerts={alerts} />
-                            </ProtectedRoute>
-                        }
-                    />
-                    <Route
-                        path="/devices"
-                        element={
-                            <ProtectedRoute>
-                                <DevicesPage />
-                            </ProtectedRoute>
-                        }
-                    />
-                </Routes>
-            </main>
-        </div>
+        <>
+            {/* Show Navbar on every page except the landing page */}
+            {token && <Navbar />}
+            {!token && <Navbar />}
+
+            <Routes>
+                {/* Public — redirect to /devices if already logged in */}
+                <Route path="/" element={
+                    token ? <Navigate to="/devices" replace /> : <LandingPage />
+                } />
+                <Route path="/login" element={
+                    token && !hasOAuthCallback ? <Navigate to="/devices" replace /> : <LoginPage />
+                } />
+                <Route path="/register" element={
+                    token ? <Navigate to="/devices" replace /> : <RegisterPage />
+                } />
+
+                {/* Protected */}
+                <Route path="/devices" element={
+                    <ProtectedRoute><DevicesPage /></ProtectedRoute>
+                } />
+                <Route path="/alerts" element={
+                    <ProtectedRoute><AlertsPage /></ProtectedRoute>
+                } />
+
+                {/* Fallback */}
+                <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+        </>
     );
 }
 

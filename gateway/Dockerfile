@@ -8,9 +8,9 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install --omit=dev
 
-COPY gateway.js ./
+COPY iot.js ./
 
 # SQLite DB lives here — mount a volume to persist across restarts
 VOLUME ["/data"]
 
-CMD ["node", "gateway.js"]
+CMD ["node", "iot.js"]

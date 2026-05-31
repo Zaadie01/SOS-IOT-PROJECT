@@ -8,18 +8,18 @@ router.get('/sos', requireAuth, (req, res) => {
 
     const rows = device_id
         ? db.prepare(`
-            SELECT se.id, se.timestamp, se.button_pressed, se.synced_at, g.name AS device_name
+            SELECT se.id, se.timestamp, se.synced_at, se.device_db_id, g.name AS device_name
             FROM sos_events se
             JOIN gateways g ON g.id = se.device_db_id
             WHERE g.owner_id = ? AND g.id = ?
-            ORDER BY se.timestamp DESC
+            ORDER BY se.synced_at DESC
           `).all(req.user.id, device_id)
         : db.prepare(`
-            SELECT se.id, se.timestamp, se.button_pressed, se.synced_at, g.name AS device_name
+            SELECT se.id, se.timestamp, se.synced_at, se.device_db_id, g.name AS device_name
             FROM sos_events se
             JOIN gateways g ON g.id = se.device_db_id
             WHERE g.owner_id = ?
-            ORDER BY se.timestamp DESC
+            ORDER BY se.synced_at DESC
           `).all(req.user.id);
 
     res.json({ alerts: rows });

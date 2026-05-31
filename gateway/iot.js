@@ -1,37 +1,32 @@
-// gateway.js - Serial gateway with SQLite persistence and cloud upload
+// iot.js — HARDWARIO SOS Gateway
+// Reads SOS events from serial port, stores them locally (SQLite),
+// and uploads to the cloud when connectivity is available.
 require('dotenv').config();
 
-const { SerialPort } = require('serialport');
+const { SerialPort }    = require('serialport');
 const { ReadlineParser } = require('@serialport/parser-readline');
-const axios = require('axios');
-const Database = require('better-sqlite3');
-const express = require('express');
+const axios             = require('axios');
+const Database          = require('better-sqlite3');
+const express           = require('express');
 
 const CONFIG = {
-    serialPort:         process.env.SERIAL_PORT         || '/dev/ttyUSB0',
-    baudRate:           115200,
-    cloudUrl:           process.env.CLOUD_URL            || 'http://localhost:3001',
-    gatewayId:          process.env.GATEWAY_ID           || 'gateway-001',
-    deviceId:           process.env.DEVICE_ID            || 'hardwario-001',
-    registrationSecret: process.env.REGISTRATION_SECRET  || '',
-    // gatewayToken is loaded from DB after registration — not set here
-    gatewayToken:       '',
-    dbPath:             process.env.DB_PATH              || '/data/gateway.db',
-    dashboardPort:      parseInt(process.env.DASHBOARD_PORT) || 8080,
-    // How often to retry uploading pending events to cloud
-    uploadIntervalMs:   parseInt(process.env.UPLOAD_INTERVAL_MS)   || 30 * 1000,
-    // Sent events are deleted after this retention period (24 h).
+    serialPort:          process.env.SERIAL_PORT           || '/dev/ttyUSB0',
+    baudRate:            115200,
+    cloudUrl:            process.env.CLOUD_URL             || 'http://localhost:3001',
+    // Registration code from the SOS IoT dashboard (Devices → Add Device)
+    registrationCode:    process.env.REGISTRATION_CODE     || '',
+    gatewayToken:        '',          // loaded from DB after first registration
+    dbPath:              process.env.DB_PATH               || '/data/gateway.db',
+    dashboardPort:       parseInt(process.env.DASHBOARD_PORT)      || 8080,
+    uploadIntervalMs:    parseInt(process.env.UPLOAD_INTERVAL_MS)  || 30 * 1000,
+    // Sent events are kept for retention period, then deleted.
     // Unsent events are never deleted — infinite retention until uploaded.
-    sentRetentionMs:    parseInt(process.env.SENT_RETENTION_MS)    || 24 * 60 * 60 * 1000,
-    // How long to wait between registration retry attempts
-    registerRetryMs:    parseInt(process.env.REGISTER_RETRY_MS)    || 10 * 1000,
-    // How often to send a heartbeat ping to the cloud
+    sentRetentionMs:     parseInt(process.env.SENT_RETENTION_MS)   || 24 * 60 * 60 * 1000,
+    registerRetryMs:     parseInt(process.env.REGISTER_RETRY_MS)   || 10 * 1000,
     heartbeatIntervalMs: parseInt(process.env.HEARTBEAT_INTERVAL_MS) || 60 * 1000,
 };
 
-// ---------------------------------------------------------------------------
-// SQLite setup
-// ---------------------------------------------------------------------------
+// ── SQLite ────────────────────────────────────────────────────────────────────
 
 const db = new Database(CONFIG.dbPath);
 db.pragma('journal_mode = WAL');
@@ -39,7 +34,6 @@ db.pragma('journal_mode = WAL');
 db.exec(`
     CREATE TABLE IF NOT EXISTS events (
         id             INTEGER PRIMARY KEY AUTOINCREMENT,
-        device_id      TEXT    NOT NULL,
         button_pressed INTEGER NOT NULL,
         received_at    INTEGER NOT NULL,
         sent_at        INTEGER
@@ -51,31 +45,17 @@ db.exec(`
     );
 `);
 
-const stmtInsertEvent  = db.prepare(
-    'INSERT INTO events (device_id, button_pressed, received_at) VALUES (?, ?, ?)'
-);
-const stmtGetPending   = db.prepare(
-    'SELECT * FROM events WHERE sent_at IS NULL ORDER BY received_at ASC'
-);
-const stmtMarkSent     = db.prepare(
-    'UPDATE events SET sent_at = ? WHERE id = ?'
-);
-const stmtDeleteOldSent = db.prepare(
-    'DELETE FROM events WHERE sent_at IS NOT NULL AND sent_at < ?'
-);
-const stmtPendingCount = db.prepare(
-    'SELECT COUNT(*) as cnt FROM events WHERE sent_at IS NULL'
-);
-const stmtSentCount    = db.prepare(
-    'SELECT COUNT(*) as cnt FROM events WHERE sent_at IS NOT NULL'
-);
-const stmtLastEvent    = db.prepare(
-    'SELECT received_at FROM events ORDER BY received_at DESC LIMIT 1'
-);
+const stmtInsertEvent   = db.prepare('INSERT INTO events (button_pressed, received_at) VALUES (?, ?)');
+const stmtGetPending    = db.prepare('SELECT * FROM events WHERE sent_at IS NULL ORDER BY received_at ASC');
+const stmtMarkSent      = db.prepare('UPDATE events SET sent_at = ? WHERE id = ?');
+const stmtDeleteOldSent = db.prepare('DELETE FROM events WHERE sent_at IS NOT NULL AND sent_at < ?');
+const stmtPendingCount  = db.prepare('SELECT COUNT(*) AS cnt FROM events WHERE sent_at IS NULL');
+const stmtSentCount     = db.prepare('SELECT COUNT(*) AS cnt FROM events WHERE sent_at IS NOT NULL');
+const stmtLastEvent     = db.prepare('SELECT received_at FROM events ORDER BY received_at DESC LIMIT 1');
+const stmtGetMeta       = db.prepare('SELECT value FROM gateway_meta WHERE key = ?');
+const stmtSetMeta       = db.prepare('INSERT OR REPLACE INTO gateway_meta (key, value) VALUES (?, ?)');
 
-// ---------------------------------------------------------------------------
-// Gateway state (for dashboard)
-// ---------------------------------------------------------------------------
+// ── State (for dashboard) ─────────────────────────────────────────────────────
 
 const state = {
     cloudOnline:     false,
@@ -86,16 +66,11 @@ const state = {
     startedAt:       Date.now(),
 };
 
-// ---------------------------------------------------------------------------
-// Registration — obtain a token from the cloud on first startup,
-// then reuse the saved token on subsequent restarts.
-// ---------------------------------------------------------------------------
-
-const stmtGetMeta = db.prepare('SELECT value FROM gateway_meta WHERE key = ?');
-const stmtSetMeta = db.prepare('INSERT OR REPLACE INTO gateway_meta (key, value) VALUES (?, ?)');
+// ── Registration ──────────────────────────────────────────────────────────────
+// On first run: use REGISTRATION_CODE from the dashboard to get a token.
+// Token is saved in local DB and reused on all subsequent restarts.
 
 async function registerWithCloud() {
-    // Check if we already have a saved token from a previous registration
     const saved = stmtGetMeta.get('token');
     if (saved) {
         CONFIG.gatewayToken = saved.value;
@@ -103,33 +78,29 @@ async function registerWithCloud() {
         return;
     }
 
-    if (!CONFIG.registrationSecret) {
-        console.error('[REGISTER] REGISTRATION_SECRET is not set — cannot register with cloud');
+    if (!CONFIG.registrationCode) {
+        console.error('[REGISTER] REGISTRATION_CODE is not set.');
+        console.error('[REGISTER] Create a device in the SOS IoT dashboard, copy the code, and set REGISTRATION_CODE in .env');
         process.exit(1);
     }
 
-    // Retry loop: keep trying until the cloud is reachable
     let firstAttempt = true;
     while (true) {
         try {
-            if (firstAttempt) console.log(`[REGISTER] Registering gateway "${CONFIG.gatewayId}" with cloud...`);
+            if (firstAttempt) console.log('[REGISTER] Registering with cloud using registration code...');
             const res = await axios.post(
                 `${CONFIG.cloudUrl}/api/gateway/register`,
-                {
-                    gateway_id: CONFIG.gatewayId,
-                    device_id:  CONFIG.deviceId,
-                    secret:     CONFIG.registrationSecret,
-                },
+                { registration_code: CONFIG.registrationCode },
                 { timeout: 5000 }
             );
-
             CONFIG.gatewayToken = res.data.token;
             stmtSetMeta.run('token', CONFIG.gatewayToken);
             console.log('[REGISTER] Registration successful — token saved to local DB');
             return;
         } catch (err) {
+            const msg = err.response?.data?.error || err.message;
             if (firstAttempt) {
-                console.error(`[REGISTER] Cloud unreachable: ${err.message} — will keep retrying silently`);
+                console.error(`[REGISTER] Failed: ${msg} — will keep retrying`);
                 firstAttempt = false;
             }
             await new Promise(r => setTimeout(r, CONFIG.registerRetryMs));
@@ -137,19 +108,15 @@ async function registerWithCloud() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Event ingestion
-// ---------------------------------------------------------------------------
+// ── Event storage ─────────────────────────────────────────────────────────────
 
-function storeEvent(deviceId, buttonPressed) {
-    stmtInsertEvent.run(deviceId, buttonPressed, Date.now());
+function storeEvent(buttonPressed) {
+    stmtInsertEvent.run(buttonPressed, Date.now());
     state.lastEventAt = Date.now();
-    console.log(`[EVENT] Stored: device=${deviceId} clicks=${buttonPressed}`);
+    console.log(`[EVENT] Stored locally: button_pressed=${buttonPressed}`);
 }
 
-// ---------------------------------------------------------------------------
-// Cloud health check — runs when there is nothing to upload
-// ---------------------------------------------------------------------------
+// ── Cloud health check ────────────────────────────────────────────────────────
 
 async function pingCloud() {
     try {
@@ -162,62 +129,52 @@ async function pingCloud() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Heartbeat — periodically tell the cloud we are alive
-// ---------------------------------------------------------------------------
+// ── Heartbeat ─────────────────────────────────────────────────────────────────
 
 async function heartbeat() {
-    if (!CONFIG.gatewayToken) return; // not registered yet
+    if (!CONFIG.gatewayToken) return;
     try {
-        const res = await axios.post(
+        await axios.post(
             `${CONFIG.cloudUrl}/api/gateway/ping`,
             {},
-            {
-                headers: { 'x-gateway-token': CONFIG.gatewayToken },
-                timeout: 5000,
-            }
+            { headers: { 'x-gateway-token': CONFIG.gatewayToken }, timeout: 5000 }
         );
         if (!state.cloudOnline) console.log('[HEARTBEAT] Cloud back online');
         state.cloudOnline = true;
-        console.log(`[HEARTBEAT] OK — server_time=${res.data.server_time}`);
+        console.log('[HEARTBEAT] OK');
     } catch (err) {
         if (state.cloudOnline) console.error(`[HEARTBEAT] Cloud offline: ${err.message}`);
         state.cloudOnline = false;
     }
 }
 
-// ---------------------------------------------------------------------------
-// Warning — report a problem to the cloud (or clear it)
-// message = string → set warning; message = null → clear warning
-// Sends only when the warning state actually changes (one warning at a time).
-// ---------------------------------------------------------------------------
+// ── Warning ───────────────────────────────────────────────────────────────────
+// message = string → set warning; message = null → clear warning.
+// Sends only when warning state actually changes to avoid spam.
 
 async function sendWarning(message) {
     if (!CONFIG.gatewayToken) return;
     const isWarning = message !== null;
-    if (isWarning && state.warningActive) return;   // already warned, don't spam
-    if (!isWarning && !state.warningActive) return; // nothing to clear
+    if (isWarning  && state.warningActive)  return;
+    if (!isWarning && !state.warningActive) return;
 
     try {
         await axios.post(
             `${CONFIG.cloudUrl}/api/gateway/warning`,
             { message },
-            {
-                headers: { 'x-gateway-token': CONFIG.gatewayToken },
-                timeout: 5000,
-            }
+            { headers: { 'x-gateway-token': CONFIG.gatewayToken }, timeout: 5000 }
         );
         state.warningActive = isWarning;
-        if (isWarning) console.warn(`[WARNING] Sent: ${message}`);
+        if (isWarning) console.warn(`[WARNING] Set: ${message}`);
         else           console.log('[WARNING] Cleared');
     } catch (err) {
         console.error(`[WARNING] Failed to send: ${err.message}`);
     }
 }
 
-// ---------------------------------------------------------------------------
-// Cloud upload
-// ---------------------------------------------------------------------------
+// ── Cloud upload ──────────────────────────────────────────────────────────────
+// Uploads all pending (unsent) events one by one.
+// Stops on first failure and retries on the next interval.
 
 let uploading = false;
 
@@ -237,10 +194,8 @@ async function uploadPending() {
                     `${CONFIG.cloudUrl}/api/gateway/data`,
                     {
                         timestamp:      event.received_at,
-                        device_id:      event.device_id,
-                        gateway_id:     CONFIG.gatewayId,
-                        sos_alert:      1,
                         button_pressed: event.button_pressed,
+                        sos_alert:      true,
                     },
                     {
                         headers: {
@@ -258,7 +213,7 @@ async function uploadPending() {
             } catch (err) {
                 if (state.cloudOnline) console.error(`[UPLOAD] Cloud offline: ${err.message}`);
                 state.cloudOnline = false;
-                break;
+                break; // retry on next interval
             }
         }
     } finally {
@@ -266,20 +221,16 @@ async function uploadPending() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Retention cleanup — delete sent events older than 24 h
-// ---------------------------------------------------------------------------
+// ── Retention cleanup ─────────────────────────────────────────────────────────
 
 function cleanupSent() {
     const { changes } = stmtDeleteOldSent.run(Date.now() - CONFIG.sentRetentionMs);
-    if (changes > 0) console.log(`[CLEANUP] Deleted ${changes} sent event(s) older than 24 h`);
+    if (changes > 0) console.log(`[CLEANUP] Deleted ${changes} sent event(s) older than retention period`);
 }
 
-// ---------------------------------------------------------------------------
-// Serial port
-// ---------------------------------------------------------------------------
+// ── Serial port ───────────────────────────────────────────────────────────────
 
-const port = new SerialPort({ path: CONFIG.serialPort, baudRate: CONFIG.baudRate, autoOpen: false });
+const port   = new SerialPort({ path: CONFIG.serialPort, baudRate: CONFIG.baudRate, autoOpen: false });
 const parser = port.pipe(new ReadlineParser({ delimiter: '\n' }));
 
 parser.on('data', (line) => {
@@ -289,10 +240,8 @@ parser.on('data', (line) => {
     if (clean.includes('SOS:BUTTON_PRESS')) {
         const parts = clean.split(':');
         const count = parseInt(parts[3]) || 1;
-        console.log(`[EVENT] SOS! clicks=${count}`);
-        storeEvent(CONFIG.deviceId, count);
-        // Upload immediately — don't wait for the retry interval
-        uploadPending().catch(console.error);
+        storeEvent(count);
+        uploadPending().catch(console.error); // upload immediately
     }
 });
 
@@ -319,13 +268,9 @@ function openPort() {
         state.serialConnected = true;
         console.log(`[SERIAL] Reconnected to ${CONFIG.serialPort}`);
         sendWarning(null).catch(console.error);
-        port.set({ dtr: false }, () => {
-            setTimeout(() => {
-                port.set({ dtr: true }, () => {
-                    console.log('[SERIAL] HARDWARIO reset complete, listening...');
-                });
-            }, 100);
-        });
+        port.set({ dtr: false }, () => setTimeout(() => {
+            port.set({ dtr: true }, () => console.log('[SERIAL] HARDWARIO reset complete'));
+        }, 100));
     });
 }
 
@@ -335,21 +280,17 @@ async function initPort() {
             if (err) { reject(err); return; }
             state.serialConnected = true;
             console.log(`[SERIAL] Connected to ${CONFIG.serialPort}`);
-            port.set({ dtr: false }, () => {
-                setTimeout(() => {
-                    port.set({ dtr: true }, () => {
-                        console.log('[SERIAL] HARDWARIO reset complete, listening...');
-                        resolve();
-                    });
-                }, 100);
-            });
+            port.set({ dtr: false }, () => setTimeout(() => {
+                port.set({ dtr: true }, () => {
+                    console.log('[SERIAL] HARDWARIO reset complete, listening...');
+                    resolve();
+                });
+            }, 100));
         });
     });
 }
 
-// ---------------------------------------------------------------------------
-// Dashboard — simple Express HTTP server on port 8080
-// ---------------------------------------------------------------------------
+// ── Dashboard ─────────────────────────────────────────────────────────────────
 
 const app = express();
 
@@ -368,9 +309,9 @@ app.get('/', (_req, res) => {
   <meta http-equiv="refresh" content="10">
   <title>SOS Gateway Dashboard</title>
   <style>
-    body { font-family: monospace; background: #0f0f0f; color: #e0e0e0; padding: 2rem; }
-    h1   { color: #ff4444; margin-bottom: 0.5rem; }
-    h2   { color: #aaa; font-size: 0.9rem; margin-top: 0; margin-bottom: 2rem; font-weight: normal; }
+    body  { font-family: monospace; background: #0f0f0f; color: #e0e0e0; padding: 2rem; }
+    h1    { color: #ff4444; margin-bottom: 0.5rem; }
+    h2    { color: #aaa; font-size: 0.9rem; margin-top: 0; margin-bottom: 2rem; font-weight: normal; }
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; }
     .card { background: #1a1a1a; border: 1px solid #333; border-radius: 8px; padding: 1.2rem; }
     .card .label { font-size: 0.75rem; color: #888; text-transform: uppercase; letter-spacing: 1px; }
@@ -383,7 +324,7 @@ app.get('/', (_req, res) => {
 </head>
 <body>
   <h1>SOS Gateway Dashboard</h1>
-  <h2>Gateway: ${CONFIG.gatewayId} &nbsp;|&nbsp; Device: ${CONFIG.deviceId}</h2>
+  <h2>Cloud: ${CONFIG.cloudUrl}</h2>
   <div class="grid">
     <div class="card">
       <div class="label">Cloud connection</div>
@@ -413,18 +354,22 @@ app.get('/', (_req, res) => {
       <div class="label">Uptime</div>
       <div class="value" style="font-size:1rem; padding-top:0.5rem">${Math.floor(uptime/3600)}h ${Math.floor((uptime%3600)/60)}m ${uptime%60}s</div>
     </div>
+    <div class="card">
+      <div class="label">Registered</div>
+      <div class="value ${CONFIG.gatewayToken ? 'ok' : 'warn'}" style="font-size:1rem">${CONFIG.gatewayToken ? 'YES' : 'PENDING...'}</div>
+    </div>
   </div>
-  <footer>Auto-refreshes every 10 s &nbsp;|&nbsp; Cloud: ${CONFIG.cloudUrl} &nbsp;|&nbsp; DB: ${CONFIG.dbPath}</footer>
+  <footer>Auto-refreshes every 10 s &nbsp;|&nbsp; DB: ${CONFIG.dbPath} &nbsp;|&nbsp; Upload: every ${CONFIG.uploadIntervalMs / 1000} s</footer>
 </body>
 </html>`);
 });
 
 app.get('/status', (_req, res) => {
     res.json({
-        gateway_id:       CONFIG.gatewayId,
-        device_id:        CONFIG.deviceId,
+        cloud_url:        CONFIG.cloudUrl,
         cloud_online:     state.cloudOnline,
         serial_connected: state.serialConnected,
+        registered:       !!CONFIG.gatewayToken,
         pending_events:   stmtPendingCount.get().cnt,
         sent_events:      stmtSentCount.get().cnt,
         last_event_at:    state.lastEventAt,
@@ -437,46 +382,40 @@ app.listen(CONFIG.dashboardPort, () => {
     console.log(`[DASHBOARD] http://localhost:${CONFIG.dashboardPort}`);
 });
 
-// ---------------------------------------------------------------------------
-// Graceful shutdown
-// ---------------------------------------------------------------------------
+// ── Graceful shutdown ─────────────────────────────────────────────────────────
 
 process.on('SIGINT', () => {
     console.log('\n[GATEWAY] Shutting down...');
     port.close(() => { db.close(); process.exit(0); });
 });
 
-// ---------------------------------------------------------------------------
-// Start
-// ---------------------------------------------------------------------------
+// ── Start ─────────────────────────────────────────────────────────────────────
 
 console.log('╔══════════════════════════════════════╗');
 console.log('║   HARDWARIO SOS Gateway              ║');
 console.log('╚══════════════════════════════════════╝');
 console.log(`Serial:      ${CONFIG.serialPort} @ ${CONFIG.baudRate}`);
 console.log(`Cloud:       ${CONFIG.cloudUrl}`);
-console.log(`Device:      ${CONFIG.deviceId}`);
-console.log(`Gateway:     ${CONFIG.gatewayId}`);
 console.log(`DB:          ${CONFIG.dbPath}`);
 console.log(`Upload:      every ${CONFIG.uploadIntervalMs / 1000} s`);
 console.log(`Retention:   sent events kept ${CONFIG.sentRetentionMs / 3600000} h`);
 console.log(`Dashboard:   http://localhost:${CONFIG.dashboardPort}\n`);
 
-// Upload + cleanup timer — retry any pending events every 30 s
+// Retry upload + cleanup timer
 setInterval(async () => {
     await uploadPending();
     cleanupSent();
 }, CONFIG.uploadIntervalMs);
 
-// Heartbeat timer — let the cloud know we are alive
+// Heartbeat timer
 setInterval(() => heartbeat().catch(console.error), CONFIG.heartbeatIntervalMs);
 
-// Serial port starts immediately — no cloud required to receive local SOS events
+// Serial port starts immediately — no cloud required to receive local events
 initPort().catch((err) => {
     console.error('[STARTUP] Serial port error:', err.message);
 });
 
-// Registration and upload run in parallel — cloud is optional for local operation
+// Registration and initial upload — cloud is optional for local operation
 registerWithCloud()
     .then(() => {
         heartbeat().catch(console.error);
