@@ -6,70 +6,69 @@
 2. [Components](#2-components)
 3. [Data Flow](#3-data-flow)
 4. [Firmware — HARDWARIO Device](#4-firmware--hardwario-device)
-5. [Gateway — Laptop Bridge](#5-gateway--laptop-bridge)
+5. [Gateway — Local Bridge](#5-gateway--local-bridge)
 6. [Backend — Cloud Server](#6-backend--cloud-server)
 7. [Frontend — Web Dashboard](#7-frontend--web-dashboard)
 8. [Infrastructure — Docker & Caddy](#8-infrastructure--docker--caddy)
-9. [Security & Gateway Registration](#9-security--gateway-registration)
+9. [Security & Authentication](#9-security--authentication)
 10. [Deployment](#10-deployment)
-11. [Testing](#11-testing)
-12. [Reading the Database](#12-reading-the-database)
+11. [Testing with Insomnia](#11-testing-with-insomnia)
+12. [Database Reference](#12-database-reference)
 
 ---
 
 ## 1. System Overview
 
 ```
-┌─────────────────────┐        USB / Serial (UART)      ┌───────────────────────────┐
-│   HARDWARIO Core    │ ─────────────────────────────► │  Gateway (laptop/Docker)  │
-│   (IoT Device)      │   115200 baud                   │  gateway/gateway.js       │
-│                     │                                  │                           │
-│  - SOS button       │                                  │  - Reads Serial port      │
-│  - LED indicator    │                                  │  - Buffers events locally │
-│  - TMP112 temp.     │                                  │  - SQLite persistence     │
-└─────────────────────┘                                  │  - Registers with cloud   │
-                                                         └─────────────┬─────────────┘
-                                                                       │
-                                                          HTTP POST    │ /api/gateway/data
-                                                          x-gateway-token: <per-gateway token>
-                                                                       │
-                                                                       ▼
-                                                      ┌────────────────────────────┐
-                                                      │   DigitalOcean Droplet     │
-                                                      │   209.38.221.215           │
-                                                      │                            │
-                                                      │   ┌──────────────────────┐ │
-                                                      │   │   Caddy  (port 80)   │ │
-                                                      │   │   reverse proxy      │ │
-                                                      │   └──────────┬───────────┘ │
-                                                      │              │              │
-                                                      │   /ws  /api/*│  /*          │
-                                                      │         ┌────┴────┐         │
-                                                      │         │         │         │
-                                                      │         ▼         ▼         │
-                                                      │   ┌──────────┐ ┌─────────┐  │
-                                                      │   │ Backend  │ │Frontend │  │
-                                                      │   │ :3001    │ │ :80     │  │
-                                                      │   │ Express  │ │ nginx   │  │
-                                                      │   │ SQLite   │ │ React   │  │
-                                                      │   │ WebSocket│ │         │  │
-                                                      │   └──────────┘ └─────────┘  │
-                                                      └────────────────────────────┘
-                                                                       ▲
-                                                             Browser   │  WebSocket (ws://)
-                                                         http://209.38.221.215
+┌───────────────────┐   USB / Serial (UART)   ┌──────────────────────────┐
+│  HARDWARIO Core   │ ──────────────────────► │  Gateway (laptop/Pi)     │
+│  (IoT Device)     │   115200 baud           │  gateway/iot.js          │
+│                   │                          │                          │
+│  - SOS button     │                          │  - Reads Serial port     │
+│  - LED feedback   │                          │  - Buffers events in     │
+│  - TMP112 sensor  │                          │    local SQLite          │
+└───────────────────┘                          │  - Registers with cloud  │
+                                               │  - Sends heartbeat       │
+                                               └─────────────┬────────────┘
+                                                             │
+                                               HTTPS POST    │ /api/gateway/data
+                                               x-gateway-token: <token>
+                                                             │
+                                                             ▼
+                                         ┌───────────────────────────────┐
+                                         │   Cloud Server (Docker)       │
+                                         │   app-project.org             │
+                                         │                               │
+                                         │  ┌─────────────────────────┐ │
+                                         │  │  Caddy (port 80/443)    │ │
+                                         │  │  reverse proxy + TLS    │ │
+                                         │  └───────────┬─────────────┘ │
+                                         │              │                │
+                                         │   /api/* /ws │  /*           │
+                                         │         ┌────┴────┐          │
+                                         │         ▼         ▼          │
+                                         │  ┌──────────┐ ┌──────────┐  │
+                                         │  │ Backend  │ │ Frontend │  │
+                                         │  │ :3001    │ │ :80      │  │
+                                         │  │ Express  │ │ nginx    │  │
+                                         │  │ SQLite   │ │ React    │  │
+                                         │  │ WebSocket│ │Bootstrap │  │
+                                         │  └──────────┘ └──────────┘  │
+                                         └───────────────────────────────┘
+                                                             ▲
+                                               Browser ──────┘  wss://app-project.org/ws
 ```
 
 ---
 
 ## 2. Components
 
-| Component | Runs On | Technologies | File |
-|-----------|---------|-------------|------|
+| Component | Runs On | Technologies | Entry Point |
+|-----------|---------|-------------|-------------|
 | Firmware | HARDWARIO Core Module | C, HARDWARIO SDK | `firmware/src/application.c` |
-| Gateway | Laptop (Docker container) | Node.js, serialport, better-sqlite3, axios | `gateway/gateway.js` |
-| Backend | Cloud server (Docker) | Node.js, Express, SQLite, ws | `cloud/backend/server.js` |
-| Frontend | Browser | React 18, WebSocket API | `cloud/frontend/src/` |
+| Gateway | Laptop / Raspberry Pi | Node.js, serialport, better-sqlite3, axios | `gateway/iot.js` |
+| Backend | Cloud server (Docker) | Node.js, Express, Passport.js, SQLite, ws | `cloud/backend/src/server.js` |
+| Frontend | Browser | React 18, React Router v6, Bootstrap 5, @mdi/react | `cloud/frontend/src/` |
 | Reverse Proxy | Cloud server (Docker) | Caddy | `cloud/Caddyfile` |
 
 ---
@@ -86,85 +85,77 @@
 
 3.  Gateway reads the line from the Serial port (ReadlineParser)
 4.  Gateway parses it: event type = SOS, click count = 3
-5.  Gateway writes the event to the local SQLite table events:
-    { device_id, button_pressed: 3, received_at: <unix ms>, sent_at: NULL }
+5.  Gateway writes the event to local SQLite:
+    { button_pressed: 3, received_at: <unix ms>, sent_at: NULL }
 
 6.  Gateway immediately tries to upload the event:
     POST /api/gateway/data
-    Headers: { x-gateway-token: <per-gateway token from DB> }
-    Body: {
-      timestamp, device_id, gateway_id,
-      sos_alert: 1,
-      button_pressed: 3
-    }
-    If the cloud is unreachable — event stays in the DB (sent_at = NULL)
-    and will be retried every 30 seconds until successful.
+    Headers: { x-gateway-token: <token> }
+    Body:    { timestamp, button_pressed, sos_alert: true }
+    
+    If cloud is unreachable → event stays in DB (sent_at = NULL)
+    and is retried every 30 seconds until successful.
 
-7.  Caddy receives the request on port 80, routes /api/* to backend:3001
+7.  Caddy receives the request, routes /api/* to backend:3001
 
-8.  Backend looks up the token in the gateways table
-    → if not found: 401 Unauthorized
-    → if found: updates last_seen_at for this gateway
+8.  requireGateway middleware looks up the token in the gateways table
+    → not found: 401 Unauthorized
+    → found:     sets req.gateway, updates last_seen_at
 
-9.  Backend inserts a row into sos_events table
+9.  Backend inserts a row into sos_events:
+    { timestamp, button_pressed, device_db_id: gateway.id, synced_at: now }
 
 10. Backend broadcasts to all connected WebSocket clients:
-    { "type": "sos", "event": { id, timestamp, device_id, button_pressed, gateway_id } }
+    { "type": "sos", "event": { id, timestamp, button_pressed,
+                                device_name, device_db_id, synced_at } }
 
 11. Gateway marks the event as sent (sent_at = now) in local SQLite
 
 12. Browser receives the WebSocket message instantly
-13. React prepends the new alert to state — red flashing SOS block appears
-    with zero delay, no page refresh needed
+13. React prepends the new alert to state — alert history updates with
+    no page refresh needed; LastSosIndicator shows red for 5 minutes
 ```
 
-### Gateway Registration Flow (First Startup)
+### Device Registration Flow (Dashboard → Firmware)
 
 ```
-Gateway starts for the first time
-  │
-  ▼
-Check gateway_meta table: is there a saved token?
-  │
-  ├── YES → load token into CONFIG.gatewayToken, skip to serial init
-  │
-  └── NO  → POST /api/gateway/register
-              Body: { gateway_id, device_id, secret: REGISTRATION_SECRET }
-                │
-                ▼
-              Backend checks: secret === REGISTRATION_SECRET ?
-                ├── NO  → 401, gateway retries every 10 seconds
-                └── YES → generates token = crypto.randomBytes(32)
-                          INSERT INTO gateways(gateway_id, device_id, token, registered_at)
-                          returns { token: "a3f9c2...64 chars" }
-                │
-                ▼
-              Gateway saves token to gateway_meta table
-              (persists across container restarts via Docker volume)
-              │
-              ▼
-            Subsequent restarts: token loaded from local DB,
-            no registration call needed
+1. User logs in to the web dashboard
+2. User goes to Devices → Add Device → enters a name
+3. Dashboard calls POST /api/devices
+   ← Server creates a device slot in gateways table with:
+     { owner_id: user.id, name: "Office Button",
+       registration_code: "ABC12345", reg_code_expires_at: now+24h }
+   ← Returns { id, name, registration_code, expires_at }
+
+4. User copies the 8-character code into gateway/.env:
+   REGISTRATION_CODE=ABC12345
+
+5. Gateway starts and calls POST /api/gateway/register:
+   Body: { registration_code: "ABC12345" }
+   ← Server finds the slot, generates a 64-hex token, clears the code
+   ← Returns { token: "a3f9c2...", device_id: 1 }
+
+6. Gateway saves token to gateway_meta table (persists across restarts)
+
+7. Device status in dashboard changes: pending → offline → online (after ping)
 ```
 
 ### WebSocket Connection Lifecycle
 
 ```
-Browser opens http://209.38.221.215
+Browser opens app-project.org
   → React app loads (served by nginx via Caddy)
-  → App fetches GET /api/alerts/sos  (historical SOS events for initial load)
-  → App polls GET /api/gateways immediately, then every 30 s (gateway last seen)
-  → App opens WebSocket: ws://209.38.221.215/ws
+  → useAlerts hook: fetches GET /api/alerts/sos (initial history load)
+  → Opens WebSocket: wss://app-project.org/ws
        → Caddy proxies /ws to backend:3001 (HTTP upgrade)
-       → WebSocket connection established
-       → Status indicator shows "Live" (green)
+       → Connection established
 
 From this point:
-  → Every new SOS event is pushed by the server instantly — no polling
-  → When a new SOS event arrives, gateway status is also refreshed immediately
-  → Disconnect: indicator turns red, reconnects automatically every 3 s
-  → Browser goes offline (window 'offline' event): indicator turns red immediately
-  → Browser comes back online (window 'online' event): reconnects immediately
+  → New SOS events pushed instantly — no polling
+  → DevicesPage auto-refreshes every 15 s (status, last ping, SOS count)
+  → Disconnect: reconnects automatically every 3 s
+  → Browser goes offline (window 'offline' event): ws.close()
+  → Browser comes back online (window 'online' event): reconnects
 ```
 
 ---
@@ -173,7 +164,7 @@ From this point:
 
 **File:** `firmware/src/application.c`
 
-The firmware runs on the HARDWARIO Core Module, written in C using the HARDWARIO SDK.
+Written in C using the HARDWARIO Tower SDK.
 
 ### Initialization
 
@@ -183,17 +174,14 @@ void application_init(void)
 - Initializes the LED for visual feedback
 - Registers the button event handler
 - Sets up the TMP112 temperature sensor (I2C)
-- Initializes USB CDC to keep the connection with the laptop active
+- Initializes USB CDC for UART communication with the gateway
 
 ### Button Handler
 
-```c
-void button_event_handler(...)
-```
 - Fires on every button press
 - Counts consecutive clicks
 - Toggles the LED on each press
-- When triggered, sends over UART:
+- Sends over UART:
   ```
   SOS:BUTTON_PRESS:COUNT:<N>
   ```
@@ -206,122 +194,92 @@ void button_event_handler(...)
 | Delimiter | `\n` (newline) |
 | SOS message | `SOS:BUTTON_PRESS:COUNT:N` |
 
-The gateway only processes lines matching `SOS:BUTTON_PRESS` — any other UART output is ignored.
+The gateway only processes lines matching `SOS:BUTTON_PRESS`.
 
 ---
 
-## 5. Gateway — Laptop Bridge
+## 5. Gateway — Local Bridge
 
-**File:** `gateway/gateway.js`
+**File:** `gateway/iot.js`
 **Container:** `gateway/Dockerfile` + `gateway/docker-compose.yml`
 
-The gateway is a Node.js process running inside a Docker container on the laptop. It bridges the HARDWARIO device (USB/UART) to the cloud backend.
+A Node.js process that bridges the HARDWARIO device (USB/UART) to the cloud backend. Can run on a laptop or Raspberry Pi.
 
-### Configuration (via `gateway/.env`)
+### Configuration (`gateway/.env`)
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `SERIAL_PORT` | USB port of the HARDWARIO device | `/dev/ttyUSB0` |
-| `CLOUD_URL` | Backend server address | `http://localhost:3001` |
-| `REGISTRATION_SECRET` | Shared secret used to register with the cloud | — |
-| `GATEWAY_ID` | Identifier of this gateway instance | `gateway-001` |
-| `DEVICE_ID` | Identifier of the HARDWARIO device | `hardwario-001` |
-| `DB_PATH` | Path to the SQLite file inside the container | `/data/gateway.db` |
-| `DASHBOARD_PORT` | Port for the local gateway dashboard | `8080` |
-| `UPLOAD_INTERVAL_MS` | How often to retry uploading pending events | `30000` (30 s) |
-| `SENT_RETENTION_MS` | How long to keep sent events before deleting | `86400000` (24 h) |
+| `CLOUD_URL` | Backend server address | `https://app-project.org` |
+| `REGISTRATION_CODE` | One-time code from the SOS IoT dashboard | — |
+| `DB_PATH` | SQLite file path inside the container | `/data/gateway.db` |
+| `DASHBOARD_PORT` | Local gateway dashboard port | `8080` |
+| `UPLOAD_INTERVAL_MS` | Retry interval for pending events | `30000` (30 s) |
+| `SENT_RETENTION_MS` | How long to keep sent events | `86400000` (24 h) |
 | `REGISTER_RETRY_MS` | Retry interval if registration fails | `10000` (10 s) |
-| `HEARTBEAT_INTERVAL_MS` | How often to send a liveness ping to the cloud | `60000` (60 s) |
+| `HEARTBEAT_INTERVAL_MS` | Liveness ping interval | `60000` (60 s) |
+
+### Getting a Registration Code
+
+1. Log in to the web dashboard → **Devices** → **Add Device**
+2. Enter a device name — you'll receive an 8-character code (valid 24 h, one-time use)
+3. Set it in `gateway/.env`: `REGISTRATION_CODE=XXXXXXXX`
+4. Start the gateway — it registers automatically on first run and saves the token locally
+
+The code is consumed after registration. On subsequent restarts the gateway uses the saved token.
 
 ### Local Database Schema
 
-**Table `events`** — all SOS events received from the device:
+**Table `events`** — SOS events buffer:
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | INTEGER | Auto-increment |
-| `device_id` | TEXT | Device that sent the event |
 | `button_pressed` | INTEGER | Number of button clicks |
-| `received_at` | INTEGER | Unix ms timestamp of when event arrived |
-| `sent_at` | INTEGER | When it was uploaded to cloud (NULL = pending) |
+| `received_at` | INTEGER | Unix ms — when event arrived |
+| `sent_at` | INTEGER | Unix ms — when uploaded (NULL = pending) |
 
-**Table `gateway_meta`** — key-value store for persistent gateway state:
+**Table `gateway_meta`** — key-value persistent state:
 
 | key | value |
 |-----|-------|
-| `token` | Auth token received from the cloud after registration |
+| `token` | Auth token received from cloud after registration |
 
 ### Data Retention Policy
 
-| Data type | Retention |
-|-----------|-----------|
-| Unsent events (`sent_at IS NULL`) | **Infinite** — never deleted until successfully uploaded |
-| Sent events (`sent_at IS NOT NULL`) | **24 hours** — cleaned up automatically |
-
-This guarantees no SOS event is lost due to temporary connectivity issues.
-If the cloud is unreachable when the button is pressed, the event is stored locally and uploaded automatically when connectivity is restored.
+| Data | Retention |
+|------|-----------|
+| Unsent events (`sent_at IS NULL`) | **Infinite** — never deleted until uploaded |
+| Sent events (`sent_at IS NOT NULL`) | **24 hours** — auto-cleaned |
 
 ### Gateway Dashboard
 
-The gateway runs a local web dashboard on port 8080, accessible at `http://localhost:8080`.
+Local web dashboard at `http://localhost:8080`, auto-refreshes every 10 s:
 
-It displays:
 - Cloud connection status (ONLINE / OFFLINE)
-- Serial port connection status (CONNECTED / DISCONNECTED)
-- Number of pending records (not yet sent to cloud)
-- Number of sent records (within retention window)
-- Time of the last SOS event
-- Time of the last successful upload
-- Gateway uptime
+- Serial port status (CONNECTED / DISCONNECTED)
+- Pending records (not yet uploaded)
+- Sent records (within retention window)
+- Last SOS event time
+- Last successful upload time
+- Registration status (YES / PENDING...)
+- Uptime
 
-The dashboard auto-refreshes every 10 seconds. A `/status` endpoint returns the same data as JSON.
-
-### Heartbeat (Liveness Ping)
-
-Every 60 seconds (configurable via `HEARTBEAT_INTERVAL_MS`) the gateway sends a heartbeat to the cloud:
-
-```
-POST /api/gateway/ping
-x-gateway-token: <per-gateway token>
-```
-
-The cloud responds with:
-```json
-{ "ok": true, "server_time": 1700000000000 }
-```
-
-On success, `state.cloudOnline` is set to `true` and the server updates `last_seen_at` for this gateway.
-On failure, `state.cloudOnline` is set to `false` and the error is logged once.
-
-The first heartbeat is sent immediately after registration (or token load), without waiting for the first interval tick.
-
-This ensures the server always knows the gateway is alive even when no SOS events are occurring.
-The gateway cannot be pinged directly by the server because it runs on a local network behind NAT.
-
-### Warning System
-
-The gateway reports problems to the cloud via `POST /api/gateway/warning`. Only one active warning is tracked at a time — duplicate sends are suppressed by a local `state.warningActive` flag.
-
-| Event | Action |
-|-------|--------|
-| `port.on('close')` | Sends warning `"IoT node disconnected"` |
-| `port.on('error')` | Sends warning `"Serial port error: <message>"` |
-| `openPort()` success (reconnect) | Clears warning (`message: null`) |
-
-The warning is visible in `GET /api/gateways` and reflected in the frontend as a yellow gateway card.
+JSON status at `GET http://localhost:8080/status`.
 
 ### Starting the Gateway
 
 ```bash
-# Build and run with Docker (recommended)
+# Copy and fill in configuration
+cp gateway/.env.example gateway/.env
+# Edit .env: set CLOUD_URL and REGISTRATION_CODE
+
+# Start with Docker
 cd gateway
 docker compose up -d --build
 
 # View logs
 docker compose logs -f
-
-# Stop
-docker compose down
 ```
 
 Expected startup output:
@@ -330,185 +288,165 @@ Expected startup output:
 ║   HARDWARIO SOS Gateway              ║
 ╚══════════════════════════════════════╝
 Serial:      /dev/ttyUSB0 @ 115200
-Cloud:       http://209.38.221.215
-Device:      hardwario-001
-Gateway:     gateway-001
+Cloud:       https://app-project.org
 DB:          /data/gateway.db
 Upload:      every 30 s
-Retention:   sent records kept 24 h
 Dashboard:   http://localhost:8080
 
 [SERIAL] Connected to /dev/ttyUSB0
-[SERIAL] HARDWARIO reset complete, listening...
-[REGISTER] Registering gateway "gateway-001" with cloud...
+[REGISTER] Registering with cloud using registration code...
 [REGISTER] Registration successful — token saved to local DB
-[HEARTBEAT] Cloud back online
-[HEARTBEAT] OK — server_time=1700000000000
+[HEARTBEAT] OK
 ```
 
-> Serial port and cloud registration start in **parallel** — SOS events are captured and buffered locally from the very first second, even if the cloud is not yet reachable.
->
-> If registration fails on first attempt, the error is logged once and retries continue silently every 10 s until the cloud is reachable.
+> Serial port and cloud registration start in **parallel** — SOS events are buffered locally from the first second, even if the cloud is not yet reachable.
 
 ---
 
 ## 6. Backend — Cloud Server
 
-**File:** `cloud/backend/server.js`
+**Entry:** `cloud/backend/src/server.js`
 
-An Express.js server with a SQLite database and a WebSocket server. Runs inside a Docker container.
+Express.js + Passport.js + SQLite + WebSocket, running inside Docker.
+
+### Project Structure
+
+```
+src/
+├── server.js                  — HTTP server + WebSocket + SIGINT handler
+├── app.js                     — Express middleware + route mounting
+├── websocket.js               — WebSocket init and broadcast
+├── config/
+│   └── passport.js            — Local, JWT, Google OAuth strategies
+├── db/
+│   ├── index.js               — DB connection (exports db singleton)
+│   ├── schema.js              — Table creation + migrations
+│   └── cleanup.js             — Expired device cleanup job
+├── middleware/
+│   ├── auth.js                — requireAuth (JWT Bearer)
+│   ├── gateway.js             — requireGateway (x-gateway-token)
+│   └── validate.js            — express-validator result checker
+├── routes/
+│   ├── auth.routes.js         — Route definitions for /api/auth/*
+│   ├── devices.routes.js      — Route definitions for /api/devices/*
+│   ├── gateway.routes.js      — Route definitions for /api/gateway/*
+│   └── alerts.routes.js       — Route definitions for /api/alerts/*
+└── controllers/
+    ├── auth.controller.js     — register, login, Google OAuth handlers
+    ├── devices.controller.js  — CRUD handlers + status computation
+    ├── gateway.controller.js  — register, SOS data, ping, warning handlers
+    └── alerts.controller.js   — SOS history handler
+```
 
 ### Database Schema
 
-**Table `gateways`** — registered gateway instances:
+**Table `users`** — registered accounts:
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `id` | INTEGER | Auto-increment primary key |
-| `gateway_id` | TEXT | Unique gateway identifier (e.g. `gateway-001`) |
-| `device_id` | TEXT | Associated HARDWARIO device ID |
-| `token` | TEXT | Unique auth token issued to this gateway |
-| `registered_at` | INTEGER | Unix ms timestamp of first registration |
-| `last_seen_at` | INTEGER | Unix ms timestamp of last heartbeat or data upload |
-| `warning` | TEXT | Active warning message from the gateway (NULL = no warning) |
+| `id` | INTEGER | Auto-increment PK |
+| `email` | TEXT | Unique email address |
+| `password_hash` | TEXT | bcrypt hash (empty for Google-only accounts) |
+| `role` | TEXT | `user` or `admin` |
+| `display_name` | TEXT | Name shown in UI |
+| `google_id` | TEXT | Linked Google account ID |
+| `created_at` | INTEGER | Unix ms |
 
-**Table `sos_events`** — stores every SOS alert received from any gateway:
+**Table `gateways`** — user-owned IoT devices:
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `id` | INTEGER | Auto-increment primary key |
-| `timestamp` | INTEGER | Unix ms timestamp from the device |
-| `device_id` | TEXT | Device that triggered the alert |
-| `button_pressed` | INTEGER | Number of button clicks in this event |
-| `gateway_id` | TEXT | Gateway that forwarded the event |
-| `synced_at` | INTEGER | Server time when the record was inserted |
+| `id` | INTEGER | Auto-increment PK |
+| `name` | TEXT | User-given device name |
+| `owner_id` | INTEGER | FK → users.id |
+| `token` | TEXT | Auth token used by firmware (NULL until registered) |
+| `registration_code` | TEXT | One-time 8-char code (NULL after firmware registers) |
+| `reg_code_expires_at` | INTEGER | Code expiry Unix ms |
+| `registered_at` | INTEGER | When the device slot was created |
+| `last_seen_at` | INTEGER | Last heartbeat or data upload time |
+| `warning` | TEXT | Active warning from firmware (NULL = no warning) |
+
+**Table `sos_events`** — SOS alert history:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER | Auto-increment PK |
+| `timestamp` | INTEGER | Event time (from firmware, falls back to server time) |
+| `button_pressed` | INTEGER | Click count |
+| `device_db_id` | INTEGER | FK → gateways.id |
+| `synced_at` | INTEGER | Server receive time (used for sorting) |
 
 ### API Endpoints
 
-| Method | URL | Description | Auth |
-|--------|-----|-------------|------|
-| `GET` | `/` | Health check + active WebSocket client count | No |
-| `POST` | `/api/gateway/register` | Register a new gateway, receive unique token | Registration secret |
-| `POST` | `/api/gateway/data` | Receive SOS event data from a gateway | Per-gateway token |
-| `POST` | `/api/gateway/ping` | Heartbeat — gateway confirms it is alive, updates `last_seen_at` | Per-gateway token |
-| `POST` | `/api/gateway/warning` | Set or clear a warning message for this gateway | Per-gateway token |
-| `GET` | `/api/alerts/sos` | Get full SOS event history | No |
-| `GET` | `/api/gateways` | List all registered gateways and their last seen time | No |
-| `GET` | `/api/gateways/:gateway_id` | Get status of a single gateway by ID | No |
+#### Auth
 
-### POST /api/gateway/register
+| Method | URL | Auth | Description |
+|--------|-----|------|-------------|
+| `POST` | `/api/auth/register` | — | Create account, returns JWT |
+| `POST` | `/api/auth/login` | — | Login, returns JWT |
+| `GET` | `/api/auth/me` | JWT | Current user info |
+| `GET` | `/api/auth/google` | — | Start Google OAuth |
+| `GET` | `/api/auth/google/callback` | — | Google OAuth callback |
+| `POST` | `/api/auth/google/prepare-link` | JWT | Step 1: save user in session for linking |
+| `GET` | `/api/auth/google/link` | Session | Step 2: link Google to existing account |
 
-Request body:
-```json
-{
-  "gateway_id": "gateway-001",
-  "device_id":  "hardwario-001",
-  "secret":     "<REGISTRATION_SECRET>"
-}
+#### Devices (all require JWT)
+
+| Method | URL | Description |
+|--------|-----|-------------|
+| `GET` | `/api/devices` | List user's devices with computed status |
+| `POST` | `/api/devices` | Create device slot, returns registration code |
+| `PATCH` | `/api/devices/:id` | Rename device |
+| `DELETE` | `/api/devices/:id` | Delete device and its SOS history |
+
+#### Gateway (firmware → server, requires x-gateway-token except register)
+
+| Method | URL | Description |
+|--------|-----|-------------|
+| `POST` | `/api/gateway/register` | Register with one-time code, receive token |
+| `POST` | `/api/gateway/data` | Send SOS event |
+| `POST` | `/api/gateway/ping` | Heartbeat — update last_seen_at |
+| `POST` | `/api/gateway/warning` | Set or clear a warning message |
+
+#### Alerts (requires JWT)
+
+| Method | URL | Description |
+|--------|-----|-------------|
+| `GET` | `/api/alerts/sos` | SOS history for user's devices |
+| `GET` | `/api/alerts/sos?device_id=N` | Filtered by specific device |
+
+### Device Status Logic
+
+Status is computed on-the-fly from existing DB fields, no extra column needed:
+
 ```
-
-Response `201`:
-```json
-{ "token": "a3f9c2d1...64 hex chars" }
+token IS NULL               → pending  (firmware never connected)
+warning IS NOT NULL         → warning  (firmware reported a problem)
+last_seen_at IS NULL        → offline
+now - last_seen_at < 5 min  → online
+now - last_seen_at ≥ 5 min  → offline
 ```
-
-The token is unique per gateway and stored in the `gateways` table. The gateway must store it locally and use it in all subsequent `POST /api/gateway/data` calls.
-
-### POST /api/gateway/data
-
-Request headers:
-```
-x-gateway-token: <token received after registration>
-```
-
-Request body:
-```json
-{
-  "timestamp":      1700000000000,
-  "device_id":      "hardwario-001",
-  "gateway_id":     "gateway-001",
-  "sos_alert":      1,
-  "button_pressed": 3
-}
-```
-
-If `sos_alert !== 1`, the record is acknowledged but not stored.
-
-### POST /api/gateway/ping
-
-Request headers:
-```
-x-gateway-token: <token received after registration>
-```
-
-Response `200`:
-```json
-{ "ok": true, "server_time": 1700000000000 }
-```
-
-Updates `last_seen_at` in the `gateways` table. Called automatically by the gateway every 60 seconds and also once immediately after registration.
-
-### POST /api/gateway/warning
-
-Request headers:
-```
-x-gateway-token: <token received after registration>
-```
-
-Request body — set a warning:
-```json
-{ "message": "IoT node disconnected" }
-```
-
-Request body — clear the warning:
-```json
-{ "message": null }
-```
-
-Response `200`:
-```json
-{ "ok": true }
-```
-
-Stores the message in the `warning` column of the `gateways` table. If `message` is `null` or omitted, the warning is cleared. The gateway sends this automatically — one warning is sent on serial disconnect, and it is cleared on successful reconnect. Duplicate warnings are suppressed by a local `warningActive` flag.
-
-### GET /api/gateways/:gateway_id
-
-Response `200`:
-```json
-{
-  "gateway": {
-    "gateway_id": "gateway-001",
-    "device_id": "hardwario-001",
-    "registered_at": 1700000000000,
-    "last_seen_at": 1700000060000,
-    "warning": null
-  }
-}
-```
-
-Response `404` if no gateway with that ID exists.
 
 ### WebSocket
 
-The WebSocket server runs on the same HTTP server as Express, on path `/ws`.
+Server path: `/ws`
+Public URL: `wss://app-project.org/ws`
 
-```
-ws://209.38.221.215/ws
-```
-
-When a new SOS event arrives, the backend calls `broadcast()` which sends to all connected browsers:
+On SOS event received, backend broadcasts to all connected clients:
 
 ```json
-{ "type": "sos", "event": { "id": 42, "timestamp": 1700000000000, "device_id": "hardwario-001", "button_pressed": 3, "gateway_id": "gateway-001" } }
+{
+  "type": "sos",
+  "event": {
+    "id": 42,
+    "timestamp": 1700000000000,
+    "synced_at": 1700000000100,
+    "button_pressed": 3,
+    "device_name": "Office Button",
+    "device_db_id": 1
+  }
+}
 ```
-
-### Data Persistence
-
-The SQLite file is stored at `/app/data/gateway_data.db` inside the container.
-It persists across container restarts via the Docker volume `sqlite-data`.
-
-> **Note:** `docker compose down -v` will erase all data including SOS history and registered gateways.
 
 ---
 
@@ -516,89 +454,70 @@ It persists across container restarts via the Docker volume `sqlite-data`.
 
 **Folder:** `cloud/frontend/src/`
 
-A React 18 application compiled to static files and served by nginx.
+React 18 SPA, compiled to static files served by nginx.
 
-### Component Tree
-
-```
-App.js
-├── connects to WebSocket on mount (auto-reconnects every 3 s on drop)
-├── fetches SOS history via GET /api/alerts/sos on mount
-├── tab navigation: Dashboard | Gateways
-│
-├── [Dashboard tab]
-│   ├── SOSAlert.jsx     — red flashing block only for alerts < 5 min old;
-│   │                      header shows "X total, Y recent" + "expires in N min" hint;
-│   │                      all recent alerts shown; list hidden once window expires
-│   └── Dashboard.jsx    — stats cards (total events, active devices)
-│                          + event log table (last 20 alerts)
-│
-└── [Gateways tab]
-    └── Gateways.jsx     — cards for every registered gateway:
-                           gateway_id, device_id, last ping (relative + absolute),
-                           registered_at, status badge, warning message
-                           badge states: Active (green) / Warning (yellow) / Inactive (red)
-                           warning shown if gateway.warning is not null
-                           inactive = last ping > 5 min ago
-                           auto-refreshes every 30 s with "Auto-updates every 30s" label;
-                           manual Refresh button
-```
-
-### Real-time Updates
-
-On mount, the app opens a persistent WebSocket connection with automatic reconnect:
-
-```js
-function connect() {
-    const ws = new WebSocket(`ws://${window.location.host}/ws`);
-    ws.onopen  = () => setWsConnected(true);
-    ws.onclose = () => { setWsConnected(false); setTimeout(connect, 3000); };
-    ws.onmessage = (e) => {
-        try {
-            const msg = JSON.parse(e.data);
-            if (msg.type === 'sos') {
-                setAlerts(prev => [msg.event, ...prev]);
-                pollGateway(); // refresh gateway "last seen" immediately
-            }
-        } catch (err) {
-            console.error('[WS] Failed to parse message:', err);
-        }
-    };
-}
-window.addEventListener('offline', () => { setWsConnected(false); ws.close(); });
-window.addEventListener('online',  () => connect());
-```
-
-Status indicators (header):
-| Indicator | Green | Red |
-|-----------|-------|-----|
-| **Live** | WebSocket connected — events arrive instantly | Dropped — reconnecting every 3 s |
-| **Gateway: Xm ago** | Gateway sent data or heartbeat within last 5 minutes | Last seen more than 5 minutes ago |
-
-Gateway status is polled every 30 seconds and also refreshed immediately when a new SOS event arrives via WebSocket.
-
-`last_seen_at` is updated on every `POST /api/gateway/data` and `POST /api/gateway/ping`, so the indicator stays green even when no SOS events are occurring.
-
-### SOSAlert — Recent vs Historical
-
-The component distinguishes between recent and historical alerts:
-
-| State | Condition | Visual |
-|-------|-----------|--------|
-| `has-alerts` (red) | At least one alert within the last 5 minutes | Red flashing section, all recent alerts listed, "expires in N min" hint in header |
-| `no-alerts` (neutral) | All alerts older than 5 minutes | Neutral header only — no list; full history is in the `SOS History` section below |
-
-The component re-evaluates the 5-minute window every 30 seconds, so the `🚨` badge and alert list disappear automatically without any user interaction.
-
-### Build Process
-
-The React app is **built locally** (not inside Docker) and the compiled output is transferred to the server:
+### Project Structure
 
 ```
-npm run build  →  build/  →  scp to server  →  Docker copies to nginx
+src/
+├── index.js                — Bootstrap CSS + ReactDOM entry point
+├── App.js                  — BrowserRouter + AuthProvider
+├── AppRouter.jsx           — All <Route> definitions
+├── App.css                 — Global styles (Inter font, Bootstrap overrides)
+├── api/
+│   └── index.js            — Unified API client (JWT auth, 401 handling)
+├── context/
+│   └── AuthContext.js      — JWT token + user state in localStorage
+├── hooks/
+│   └── useAlerts.js        — Fetch SOS history + WebSocket live updates
+├── utils/
+│   └── time.js             — formatTime helper (HH:MM:SS, DD/MM/YYYY)
+├── components/
+│   ├── auth/ProtectedRoute.jsx
+│   ├── layout/Navbar.jsx
+│   ├── common/
+│   │   ├── GoogleLogo.jsx
+│   │   └── StatusBadge.jsx
+│   ├── devices/
+│   │   ├── DeviceModal.jsx  — Add / Rename / Delete / Show code modals
+│   │   └── CodeBanner.jsx
+│   └── alerts/
+│       ├── DeviceFilter.jsx
+│       └── LastSosIndicator.jsx
+└── pages/
+    ├── LandingPage.jsx
+    ├── LoginPage.jsx
+    ├── RegisterPage.jsx
+    ├── DevicesPage.jsx      — Device grid, search/sort/filter, auto-refresh 15 s
+    └── AlertsPage.jsx       — SOS history table, pagination (25/page), device filter
 ```
 
-The frontend Dockerfile only serves the pre-built `build/` folder via nginx — it contains no Node.js or build tooling. This is required because the cloud server does not have enough RAM to run `npm install`.
+### Routes
+
+| Path | Auth required | Description |
+|------|--------------|-------------|
+| `/` | — | Landing page (redirects to /devices if logged in) |
+| `/login` | — | Login with email/password or Google |
+| `/register` | — | Register with email/password or Google |
+| `/devices` | ✅ | Device management |
+| `/alerts` | ✅ | SOS alert history |
+| `/alerts?device=N` | ✅ | Alerts pre-filtered by device |
+
+### Authentication Flow
+
+```
+Login → POST /api/auth/login → { token, user }
+     → stored in localStorage (sos_auth_token, sos_auth_user)
+     → all subsequent API calls include: Authorization: Bearer <token>
+     → 401 with a stored token → force logout + redirect to /login
+     → 401 without a stored token → show error in form (login attempt)
+
+Google OAuth → click "Continue with Google"
+           → GET /api/auth/google → redirect to Google
+           → Google callback → POST /api/auth/google/callback
+           → redirect to /login?token=...&user=...
+           → LoginPage reads params → stores token + user
+```
 
 ---
 
@@ -609,19 +528,20 @@ The frontend Dockerfile only serves the pre-built `build/` folder via nginx — 
 **File:** `cloud/docker-compose.yml`
 
 ```
-caddy      → exposes ports 80, 443 — sole public entry point
-backend    → internal port 3001 only
-frontend   → internal port 80 only
+caddy     → ports 80, 443 — sole public entry point
+backend   → internal port 3001 only
+frontend  → internal port 80 only
 ```
 
-All three containers run on the internal Docker network `cloud_default`. Nothing except Caddy is reachable from outside the host.
+All three containers share the internal Docker network `sos-iot`.
+Nothing except Caddy is reachable from outside the host.
 
 **File:** `gateway/docker-compose.yml`
 
 ```
-gateway    → exposes port 8080 (local dashboard)
-             mounts /dev/ttyUSB0 for USB serial access
-             volume gateway-sqlite for SQLite persistence
+gateway   → port 8080 (local dashboard)
+            mounts SERIAL_PORT device for USB serial access
+            volume gateway-sqlite for SQLite persistence
 ```
 
 ### Caddy Routing
@@ -629,332 +549,246 @@ gateway    → exposes port 8080 (local dashboard)
 **File:** `cloud/Caddyfile`
 
 ```
-:80 {
-    handle /ws     → reverse_proxy backend:3001  (WebSocket upgrade)
-    handle /api/*  → reverse_proxy backend:3001  (REST API)
-    handle /*      → reverse_proxy frontend:80   (React SPA)
+app-project.org {
+    handle /ws     { reverse_proxy backend:3001 }   # WebSocket
+    handle /api/*  { reverse_proxy backend:3001 }   # REST API
+    handle /*      { reverse_proxy frontend:80  }   # React SPA
 }
 ```
 
-| Request | Path | Goes to |
-|---------|------|---------|
-| Browser opens dashboard | `/*` | nginx → React SPA |
-| React fetches history | `/api/alerts/sos` | Express backend |
-| Gateway registers | `/api/gateway/register` | Express backend |
-| Gateway posts data | `/api/gateway/data` | Express backend |
-| WebSocket connection | `/ws` | WebSocket server |
+### Docker Volumes
 
-### Volumes
-
-| Volume | Where | Purpose |
-|--------|-------|---------|
-| `sqlite-data` | Cloud backend | SOS events database (`/app/data/`) |
-| `gateway-sqlite` | Gateway | Local buffer + meta (`/data/`) |
+| Volume | Service | Purpose |
+|--------|---------|---------|
+| `sqlite-data` | Backend | SOS events + user data (`/app/data/`) |
 | `caddy_data` | Caddy | TLS certificates |
 | `caddy_config` | Caddy | Internal Caddy config |
+| `gateway-sqlite` | Gateway | Local event buffer + meta |
 
-### Auto-restart Policy
+### Auto-restart
 
-All containers use `restart: unless-stopped`. This means:
-- They start automatically when Docker starts (i.e. when the machine boots, if Docker is set to auto-start)
-- They restart automatically if they crash
-- They only stay stopped if explicitly stopped with `docker compose down`
+All containers use `restart: unless-stopped`:
+- Start automatically on Docker daemon start (e.g. server reboot)
+- Restart automatically on crash
+- Stay stopped only after explicit `docker compose down`
 
 ---
 
-## 9. Security & Gateway Registration
+## 9. Security & Authentication
 
-### Registration Model
-
-Each gateway must register itself with the cloud before it can send data.
+### User Authentication
 
 | What | How |
 |------|-----|
-| **Authentication for registration** | `REGISTRATION_SECRET` — shared password in `.env` on both sides |
-| **Authentication for data upload** | Per-gateway token issued by cloud after registration |
-| **Token storage (cloud)** | `gateways` table in SQLite |
-| **Token storage (gateway)** | `gateway_meta` table in local SQLite |
+| Password login | Passport.js Local strategy + bcrypt |
+| Token issuance | JWT, signed with `JWT_SECRET`, 8-hour expiry |
+| Protected routes | `requireAuth` middleware (passport-jwt) |
+| Google OAuth | Passport.js Google strategy; auto-links if email matches |
 
-A gateway that loses its local DB (e.g. volume deleted) re-registers automatically and receives a new token.
+### Device Authentication
+
+| What | How |
+|------|-----|
+| First registration | One-time 8-char code issued by the dashboard (24 h TTL) |
+| Ongoing auth | Per-device 64-hex token in `x-gateway-token` header |
+| Token lookup | `requireGateway` middleware: `SELECT * FROM gateways WHERE token = ?` |
+| Token storage (cloud) | `gateways.token` in SQLite |
+| Token storage (gateway) | `gateway_meta` table in local SQLite |
+
+### Ownership & Isolation
+
+- Each device belongs to one user (`owner_id`)
+- `GET /api/devices` and `GET /api/alerts/sos` only return rows where `owner_id = req.user.id`
+- Attempting to rename/delete another user's device returns **404**
 
 ### What Is Protected
 
 | Endpoint | Protection |
 |----------|-----------|
-| `POST /api/gateway/register` | `REGISTRATION_SECRET` required in body |
-| `POST /api/gateway/data` | Per-gateway token required in `x-gateway-token` header |
-| `POST /api/gateway/ping` | Per-gateway token required in `x-gateway-token` header |
-| `POST /api/gateway/warning` | Per-gateway token required in `x-gateway-token` header |
-| `GET /api/alerts/sos` | Open — anyone can read history |
-| `GET /api/gateways` | Open — anyone can see registered gateways |
-| `GET /api/gateways/:gateway_id` | Open — anyone can query a gateway by ID |
-| `GET /ws` | Open — anyone can connect and watch live alerts |
+| `POST /api/auth/register` | Open — validated by express-validator |
+| `POST /api/auth/login` | Open |
+| `GET /api/auth/me` | JWT required |
+| `GET /api/devices` and children | JWT required |
+| `GET /api/alerts/sos` | JWT required |
+| `POST /api/gateway/register` | Valid registration code required |
+| `POST /api/gateway/data` | Per-device token required |
+| `POST /api/gateway/ping` | Per-device token required |
+| `POST /api/gateway/warning` | Per-device token required |
 
-### Token Validation (Data Upload)
+### Secrets Management
 
-```js
-// Backend: look up token in DB, reject if not found
-db.get('SELECT * FROM gateways WHERE token = ?', [incomingToken], (err, gateway) => {
-    if (!gateway) return res.status(401).json({ error: 'Unauthorized — gateway not registered' });
-    db.run('UPDATE gateways SET last_seen_at = ? WHERE id = ?', [Date.now(), gateway.id]);
-    // ... process data
-});
-```
+All secrets are in `.env` files, never committed to git:
 
-### Token Storage
-
-- **Cloud:** `REGISTRATION_SECRET` in `/home/deploy/sos-iot/cloud/backend/.env` → loaded via docker-compose `env_file: ./backend/.env`
-- **Gateway:** `REGISTRATION_SECRET` in `gateway/.env` → loaded by `dotenv`; received token stored in SQLite `gateway_meta`
-- **Git:** Both `.env` files are in `.gitignore` — secrets are never committed
-
-### Current Risks
-
-| Risk | Severity | Cause |
-|------|----------|-------|
-| Data sent over plain HTTP | High | No HTTPS — token can be intercepted on the network |
-| SOS history publicly readable | Low | `GET /api/alerts/sos` has no auth |
-| Anyone can watch live alerts | Low | WebSocket `/ws` has no auth |
-| No rate limiting | Medium | POST endpoints can be spammed |
-
-### Recommended Hardening (Production)
-
-**1. Add HTTPS** — the most important fix. With a domain name, Caddy handles TLS automatically:
-```
-yourdomain.com {
-    handle /ws     { reverse_proxy backend:3001 }
-    handle /api/*  { reverse_proxy backend:3001 }
-    handle /*      { reverse_proxy frontend:80  }
-}
-```
-This also upgrades WebSocket to `wss://` automatically.
-
-**2. Firewall on the droplet:**
-```bash
-ufw allow 22    # SSH
-ufw allow 80    # HTTP
-ufw allow 443   # HTTPS
-ufw enable
-```
-
-**3. Rate limiting** — add `express-rate-limit` to the POST endpoints.
+| Secret | File | Used for |
+|--------|------|---------|
+| `JWT_SECRET` | `cloud/backend/.env` | Signing user JWTs |
+| `SESSION_SECRET` | `cloud/backend/.env` | Google OAuth session |
+| `GOOGLE_CLIENT_ID` | `cloud/backend/.env` | Google OAuth |
+| `GOOGLE_CLIENT_SECRET` | `cloud/backend/.env` | Google OAuth |
 
 ---
 
 ## 10. Deployment
 
-### Cloud — First Deploy
+### Prerequisites (server)
 
 ```bash
-# 1. Install Docker on the server
+# Install Docker
 curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker $USER
 
-# 2. Copy cloud/ directory to the server
-scp -r cloud/ deploy@209.38.221.215:/home/deploy/sos-iot/
-
-# 3. Create .env for the backend on the server
-ssh deploy@209.38.221.215
-echo "REGISTRATION_SECRET=your-strong-secret-here" > /home/deploy/sos-iot/cloud/backend/.env
-
-# 4. Start all services
-cd /home/deploy/sos-iot/cloud
-docker compose up -d --build
+# Install rsync (for local-deploy.sh)
+# On local machine (Debian/Ubuntu):
+sudo apt install rsync
 ```
 
-### Gateway — First Run
+### First Deploy
 
 ```bash
-# 1. Create gateway/.env on the laptop
+# 1. Create backend .env on the server (one time)
+ssh deploy@<YOUR_SERVER>
+cp ~/sos/SOS-IOT-PROJECT/cloud/backend/.env.example \
+   ~/sos/SOS-IOT-PROJECT/cloud/backend/.env
+nano ~/sos/SOS-IOT-PROJECT/cloud/backend/.env
+# Fill in: JWT_SECRET, SESSION_SECRET, GOOGLE_CLIENT_ID, etc.
+
+# 2. From your local machine, deploy
+cd SOS-IOT-PROJECT
+bash cloud/scripts/local-deploy.sh
+```
+
+`local-deploy.sh` does:
+1. Builds Docker images locally (no load on the server)
+2. Transfers images over SSH via `docker save | gzip | ssh | docker load`
+3. Syncs compose files via `rsync`
+4. Runs `docker compose up -d` on the server
+
+### Subsequent Deploys
+
+```bash
+bash cloud/scripts/local-deploy.sh
+```
+
+### Rollback
+
+```bash
+# Manual rollback to the previous images
+bash cloud/scripts/rollback.sh
+
+# Or on the server directly
+ssh deploy@<YOUR_SERVER> "bash ~/sos/SOS-IOT-PROJECT/cloud/scripts/rollback.sh"
+```
+
+### Gateway
+
+```bash
+# First time
 cp gateway/.env.example gateway/.env
-# Edit .env: set SERIAL_PORT, CLOUD_URL, REGISTRATION_SECRET, GATEWAY_ID, DEVICE_ID
+# Edit .env: set CLOUD_URL and REGISTRATION_CODE (from the web dashboard)
 
-# 2. Start the gateway container
+# Start
 cd gateway
 docker compose up -d --build
 
-# The gateway will:
-#   a) register with cloud on first startup → receive and save token
-#   b) connect to the HARDWARIO device via USB
-#   c) start buffering and uploading data
-```
-
-### Cloud — Update After Code Changes
-
-**Backend changes:**
-```bash
-scp -r cloud/backend deploy@209.38.221.215:~/cloud/
-ssh deploy@209.38.221.215 "cd ~/cloud && docker compose up -d --build backend"
-```
-
-**Frontend changes** (must be built locally first):
-```bash
-cd cloud/frontend
-npm run build
-scp -r build/ deploy@209.38.221.215:~/cloud/frontend/
-ssh deploy@209.38.221.215 "cd ~/cloud && docker compose up -d --build frontend"
-```
-
-### Reset the Cloud Database
-
-```bash
-cd /home/deploy/sos-iot/cloud
-docker compose down -v        # removes all volumes — deletes SOS history AND registered gateways
-docker compose up -d --build  # fresh start
-```
-
-> After this, all gateways will need to re-register. Their local `gateway_meta` token will fail validation → gateway retries registration automatically.
-
-### Reset the Gateway Database
-
-```bash
-cd gateway
-docker compose down -v        # removes gateway-sqlite volume
-docker compose up -d --build  # gateway will re-register on next startup
+# View logs
+docker compose logs -f
 ```
 
 ### Useful Commands
 
 ```bash
 # Check container status
-docker compose ps
+ssh deploy@<YOUR_SERVER> "cd ~/sos/SOS-IOT-PROJECT/cloud && docker compose ps"
 
-# Stream all logs
-docker compose logs -f
+# Stream backend logs
+ssh deploy@<YOUR_SERVER> "docker logs -f sos-backend"
 
-# Logs for one service
-docker compose logs -f backend
+# Reset database (deletes all users, devices, alerts)
+ssh deploy@<YOUR_SERVER> "docker exec sos-backend rm /app/data/gateway_data.db && docker restart sos-backend"
 
-# Restart a single service
-docker compose restart caddy
-
-# Stop everything (keeps volumes)
-docker compose down
-
-# Stop and delete all data
-docker compose down -v
+# Make a user admin
+ssh deploy@<YOUR_SERVER> "docker exec sos-backend node -e \
+  \"const db = require('better-sqlite3')('/app/data/gateway_data.db'); \
+    db.prepare(\\\"UPDATE users SET role = 'admin' WHERE email = ?\\\").run('you@example.com'); \
+    console.log('done');\""
 ```
 
 ---
 
-## 11. Testing
+## 11. Testing with Insomnia
 
-### Test API authentication with curl
+Import `cloud/insomnia.yaml` into Insomnia. Set `base_url = https://app-project.org` in the environment.
 
-**POST /api/gateway/data — wrong token → 401:**
-```bash
-curl -X POST http://209.38.221.215/api/gateway/data \
-  -H "Content-Type: application/json" \
-  -H "x-gateway-token: wrongtoken" \
-  -d '{"timestamp":1700000000000,"device_id":"test","gateway_id":"gw-001","sos_alert":1,"button_pressed":1}'
-# Expected: {"error":"Unauthorized — gateway not registered"}
+### Recommended test order
+
 ```
+1. Auth → POST /register         → copy token → jwt_token
+2. Auth → POST /login            → verify token works
+3. Auth → GET /me                → check user fields
 
-**POST /api/gateway/data — no token → 401:**
-```bash
-curl -X POST http://209.38.221.215/api/gateway/data \
-  -H "Content-Type: application/json" \
-  -d '{"timestamp":1700000000000,"device_id":"test","gateway_id":"gw-001","sos_alert":1,"button_pressed":1}'
-# Expected: {"error":"Unauthorized — gateway not registered"}
-```
+4. Devices → POST /devices       → copy id → device_db_id
+                                   copy registration_code → registration_code
+5. Devices → GET /devices        → status should be "pending"
 
-**POST /api/gateway/register — wrong secret → 401:**
-```bash
-curl -X POST http://209.38.221.215/api/gateway/register \
-  -H "Content-Type: application/json" \
-  -d '{"gateway_id":"test-gw","device_id":"test-device","secret":"wrongsecret"}'
-# Expected: {"error":"Forbidden"}
-```
+6. Gateway → POST /gateway/register  → copy token → gateway_token
+7. Devices → GET /devices            → status should be "offline"
 
-**GET /api/alerts/sos — read event history:**
-```bash
-curl http://209.38.221.215/api/alerts/sos
-```
+8. Gateway → POST /gateway/ping      → status becomes "online"
+9. SOS Data → POST /gateway/data ✅  → sends SOS
+10. Alerts → GET /alerts/sos         → alert appears with device_name
 
-**GET /api/gateways — list registered gateways:**
-```bash
-curl http://209.38.221.215/api/gateways
-```
+11. Gateway → POST /gateway/warning  → device status = "warning"
+12. Gateway → POST /gateway/warning (clear) → status returns to online/offline
 
-**GET /api/gateways/:id — single gateway status:**
-```bash
-curl http://209.38.221.215/api/gateways/gateway-001
-```
+13. Devices → PATCH → rename
+14. Alerts → GET /alerts/sos?device_id=N → filter works
+15. Devices → DELETE → device + history removed
 
-**POST /api/gateway/ping — simulate heartbeat (requires a valid token):**
-```bash
-curl -X POST http://209.38.221.215/api/gateway/ping \
-  -H "x-gateway-token: <token>"
-# Expected: {"ok":true,"server_time":1700000000000}
-```
-
-**POST /api/gateway/warning — set a warning:**
-```bash
-curl -X POST http://209.38.221.215/api/gateway/warning \
-  -H "Content-Type: application/json" \
-  -H "x-gateway-token: <token>" \
-  -d '{"message":"IoT node disconnected"}'
-# Expected: {"ok":true}
-```
-
-**POST /api/gateway/warning — clear the warning:**
-```bash
-curl -X POST http://209.38.221.215/api/gateway/warning \
-  -H "Content-Type: application/json" \
-  -H "x-gateway-token: <token>" \
-  -d '{"message":null}'
-# Expected: {"ok":true}
-```
-
-**GET / — backend health check:**
-```bash
-curl http://209.38.221.215/api/
+--- Negative cases ---
+Auth    → POST /login wrong password → 401
+Devices → GET /devices no token      → 401
+Devices → DELETE /devices/9999       → 404 (not owner)
+Gateway → POST /gateway/data no token → 401
+Gateway → POST /gateway/register bad code → 401
+Auth    → GET /api/auth/google (no GOOGLE_CLIENT_ID) → 503
 ```
 
 ---
 
-## 12. Reading the Database
+## 12. Database Reference
 
-### On the server (cloud backend)
+### Cloud Backend
 
 ```bash
-ssh deploy@209.38.221.215
-
 # Enter the backend container
+ssh deploy@<YOUR_SERVER>
 docker exec -it sos-backend sh
-
-# Open the database
 sqlite3 /app/data/gateway_data.db
 
-# Useful queries:
+# Useful queries
 .tables
-SELECT * FROM sos_events ORDER BY timestamp DESC LIMIT 20;
-SELECT * FROM gateways;
-SELECT COUNT(*) FROM sos_events;
+SELECT id, email, role, display_name FROM users;
+SELECT id, name, owner_id, status FROM gateways;   -- status computed in app, not stored
+SELECT se.id, se.timestamp, g.name AS device, se.button_pressed
+  FROM sos_events se JOIN gateways g ON g.id = se.device_db_id
+  ORDER BY se.synced_at DESC LIMIT 20;
 .quit
 ```
 
 Or without entering the container:
 ```bash
-docker exec sos-backend sqlite3 /app/data/gateway_data.db "SELECT * FROM sos_events ORDER BY timestamp DESC LIMIT 10;"
+docker exec sos-backend sqlite3 /app/data/gateway_data.db \
+  "SELECT * FROM sos_events ORDER BY synced_at DESC LIMIT 10;"
 ```
 
-### On the gateway (local laptop)
+### Gateway (local)
 
 ```bash
-# Enter the gateway container
 docker exec -it sos-gateway sh
-
 sqlite3 /data/gateway.db
 
-# Useful queries:
 .tables
-SELECT * FROM events ORDER BY received_at DESC LIMIT 20;
-SELECT * FROM events WHERE sent_at IS NULL;   -- pending (not yet uploaded)
+SELECT * FROM events WHERE sent_at IS NULL;   -- pending uploads
 SELECT * FROM gateway_meta;                   -- saved auth token
+SELECT * FROM events ORDER BY received_at DESC LIMIT 20;
 .quit
-```
-
-Or without entering the container:
-```bash
-docker exec sos-gateway sqlite3 /data/gateway.db "SELECT id, device_id, button_pressed, datetime(received_at/1000,'unixepoch') as time, sent_at FROM events ORDER BY received_at DESC LIMIT 10;"
 ```
