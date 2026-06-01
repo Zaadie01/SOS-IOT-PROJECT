@@ -4,7 +4,7 @@ name: SOS IoT API
 meta:
   id: wrk_9e49ffc21a0848e1a48207fcca839ca3
   created: 1775120803760
-  modified: 1780200000000
+  modified: 1780300000000
   description: "SOS IoT — full API collection. Base URL: https://app-project.org"
 collection:
 
@@ -21,11 +21,11 @@ collection:
     children:
 
       - url: "{{ base_url }}/api/auth/register"
-        name: POST /register — create account
+        name: POST /register — create account A
         meta:
           id: req_auth_register
           created: 1780200000000
-          modified: 1780200000000
+          modified: 1780300000000
           isPrivate: false
           description: "Open registration. Returns token — copy it into jwt_token env variable."
           sortKey: -210
@@ -48,6 +48,34 @@ collection:
           cookies: { send: true, store: true }
           rebuildPath: true
 
+      - url: "{{ base_url }}/api/auth/register"
+        name: POST /register — create account B
+        meta:
+          id: req_auth_register_b
+          created: 1780300000000
+          modified: 1780300000000
+          isPrivate: false
+          description: "Second account for invitation testing. Returns token — copy into jwt_token_b."
+          sortKey: -209
+        method: POST
+        body:
+          mimeType: application/json
+          text: |-
+            {
+              "email": "bob@example.com",
+              "password": "secret123",
+              "name": "Bob"
+            }
+        headers:
+          - name: Content-Type
+            value: application/json
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
       - url: "{{ base_url }}/api/auth/login"
         name: POST /login — sign in (Passport Local)
         meta:
@@ -56,7 +84,7 @@ collection:
           modified: 1780200000000
           isPrivate: false
           description: "Authenticates via Passport Local strategy. Returns token — copy into jwt_token."
-          sortKey: -209
+          sortKey: -208
         method: POST
         body:
           mimeType: application/json
@@ -83,7 +111,7 @@ collection:
           modified: 1780200000000
           isPrivate: false
           description: "Should return 401 Invalid credentials."
-          sortKey: -208
+          sortKey: -207
         method: POST
         body:
           mimeType: application/json
@@ -109,8 +137,8 @@ collection:
           created: 1780200000000
           modified: 1780200000000
           isPrivate: false
-          description: "Returns id, email, role decoded from the JWT."
-          sortKey: -207
+          description: "Returns id, email, role, display_name decoded from the JWT."
+          sortKey: -206
         method: GET
         headers:
           - name: Authorization
@@ -130,7 +158,7 @@ collection:
           modified: 1780200000000
           isPrivate: false
           description: "No Authorization header — should return 401."
-          sortKey: -206
+          sortKey: -205
         method: GET
         settings:
           renderRequestBody: true
@@ -147,7 +175,7 @@ collection:
           modified: 1780200000000
           isPrivate: false
           description: "Open in a browser — redirects to Google. Returns 503 if GOOGLE_CLIENT_ID is not configured."
-          sortKey: -205
+          sortKey: -204
         method: GET
         settings:
           renderRequestBody: true
@@ -163,9 +191,9 @@ collection:
     meta:
       id: fld_devices_001
       created: 1780200000000
-      modified: 1780200000000
+      modified: 1780300000000
       sortKey: -300
-      description: "Device CRUD. Each user sees only their own. Status: pending / online / offline / warning."
+      description: "Device CRUD. Returns own devices + devices shared via accepted invitations. New fields: is_owner (bool), owner_id, owner_name. registration_code/reg_code_expires_at are null for non-owners."
     children:
 
       - url: "{{ base_url }}/api/devices"
@@ -173,9 +201,9 @@ collection:
         meta:
           id: req_devices_list
           created: 1780200000000
-          modified: 1780200000000
+          modified: 1780300000000
           isPrivate: false
-          description: "Returns devices with computed status: pending (not registered), online (ping < 5min), offline (ping > 5min), warning (firmware reported a problem)."
+          description: "Returns own devices + accepted-invitation devices. Each device: is_owner, owner_id, owner_name. registration_code is null for non-owners."
           sortKey: -310
         method: GET
         headers:
@@ -251,7 +279,7 @@ collection:
           created: 1780200000000
           modified: 1780200000000
           isPrivate: false
-          description: "Deletes the device and all its SOS history."
+          description: "Deletes the device, all its SOS history, all invitations, and all notification prefs."
           sortKey: -305
         method: DELETE
         headers:
@@ -275,6 +303,358 @@ collection:
           sortKey: -304
         method: DELETE
         headers:
+          - name: Authorization
+            value: "Bearer {{ jwt_token }}"
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+  # ════════════════════════════════════════════════════════
+  # INVITATIONS
+  # ════════════════════════════════════════════════════════
+  - name: Invitations
+    meta:
+      id: fld_inv_001
+      created: 1780300000000
+      modified: 1780300000000
+      sortKey: -350
+      description: "Share device access with other users. Owner manages, invitee accepts/declines. Statuses: pending → accepted | declined; pending|accepted → revoked (owner). Resend resets declined|revoked to pending."
+    children:
+
+      - url: "{{ base_url }}/api/devices/{{ device_db_id }}/invitations"
+        name: POST /devices/:id/invitations — invite by user_id
+        meta:
+          id: req_inv_create_uid
+          created: 1780300000000
+          modified: 1780300000000
+          isPrivate: false
+          description: "Owner invites Bob by user_id. Returns 201 {id, status:'pending'}. Copy id → invitation_id. 409 if already pending|accepted; resends if declined|revoked."
+          sortKey: -360
+        method: POST
+        body:
+          mimeType: application/json
+          text: |-
+            {
+              "user_id": {{ invitee_user_id }}
+            }
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: Authorization
+            value: "Bearer {{ jwt_token }}"
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+      - url: "{{ base_url }}/api/devices/{{ device_db_id }}/invitations"
+        name: POST /devices/:id/invitations — invite by email
+        meta:
+          id: req_inv_create_email
+          created: 1780300000000
+          modified: 1780300000000
+          isPrivate: false
+          description: "Owner invites by email instead of user_id. Same response. 404 if email not registered."
+          sortKey: -359
+        method: POST
+        body:
+          mimeType: application/json
+          text: |-
+            {
+              "email": "bob@example.com"
+            }
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: Authorization
+            value: "Bearer {{ jwt_token }}"
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+      - url: "{{ base_url }}/api/devices/{{ device_db_id }}/invitations"
+        name: POST /devices/:id/invitations ❌ duplicate (409)
+        meta:
+          id: req_inv_create_dup
+          created: 1780300000000
+          modified: 1780300000000
+          isPrivate: false
+          description: "Same user invited again while pending|accepted — should return 409."
+          sortKey: -358
+        method: POST
+        body:
+          mimeType: application/json
+          text: |-
+            {
+              "user_id": {{ invitee_user_id }}
+            }
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: Authorization
+            value: "Bearer {{ jwt_token }}"
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+      - url: "{{ base_url }}/api/devices/{{ device_db_id }}/invitations"
+        name: GET /devices/:id/invitations — list (owner)
+        meta:
+          id: req_inv_list
+          created: 1780300000000
+          modified: 1780300000000
+          isPrivate: false
+          description: "Owner lists all invitations for a device: id, invitee_id, invitee_name, invitee_email, status, created_at."
+          sortKey: -357
+        method: GET
+        headers:
+          - name: Authorization
+            value: "Bearer {{ jwt_token }}"
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+      - url: "{{ base_url }}/api/invitations/received"
+        name: GET /invitations/received — inbox (invitee)
+        meta:
+          id: req_inv_received
+          created: 1780300000000
+          modified: 1780300000000
+          isPrivate: false
+          description: "Bob's incoming invitations: id, device_id, device_name, owner_name, status, created_at. Use jwt_token_b."
+          sortKey: -356
+        method: GET
+        headers:
+          - name: Authorization
+            value: "Bearer {{ jwt_token_b }}"
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+      - url: "{{ base_url }}/api/invitations/{{ invitation_id }}/accept"
+        name: POST /invitations/:id/accept — accept (invitee)
+        meta:
+          id: req_inv_accept
+          created: 1780300000000
+          modified: 1780300000000
+          isPrivate: false
+          description: "Bob accepts the pending invitation. Use jwt_token_b. After this Bob sees the device in GET /devices."
+          sortKey: -355
+        method: POST
+        headers:
+          - name: Authorization
+            value: "Bearer {{ jwt_token_b }}"
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+      - url: "{{ base_url }}/api/invitations/{{ invitation_id }}/decline"
+        name: POST /invitations/:id/decline — decline (invitee)
+        meta:
+          id: req_inv_decline
+          created: 1780300000000
+          modified: 1780300000000
+          isPrivate: false
+          description: "Bob declines. Use jwt_token_b. Status becomes declined; device disappears from Bob's list."
+          sortKey: -354
+        method: POST
+        headers:
+          - name: Authorization
+            value: "Bearer {{ jwt_token_b }}"
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+      - url: "{{ base_url }}/api/invitations/{{ invitation_id }}/revoke"
+        name: POST /invitations/:id/revoke — revoke (owner)
+        meta:
+          id: req_inv_revoke
+          created: 1780300000000
+          modified: 1780300000000
+          isPrivate: false
+          description: "Alice revokes pending|accepted invitation. Use jwt_token. Device disappears from Bob's list immediately."
+          sortKey: -353
+        method: POST
+        headers:
+          - name: Authorization
+            value: "Bearer {{ jwt_token }}"
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+      - url: "{{ base_url }}/api/invitations/{{ invitation_id }}"
+        name: DELETE /invitations/:id — delete row (owner)
+        meta:
+          id: req_inv_delete
+          created: 1780300000000
+          modified: 1780300000000
+          isPrivate: false
+          description: "Alice permanently removes the invitation record (any status). Use jwt_token."
+          sortKey: -352
+        method: DELETE
+        headers:
+          - name: Authorization
+            value: "Bearer {{ jwt_token }}"
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+      - url: "{{ base_url }}/api/invitations/{{ invitation_id }}/accept"
+        name: POST /invitations/:id/accept ❌ wrong user (404)
+        meta:
+          id: req_inv_accept_wrong
+          created: 1780300000000
+          modified: 1780300000000
+          isPrivate: false
+          description: "Alice tries to accept her own invitation — should return 404 (not invitee)."
+          sortKey: -351
+        method: POST
+        headers:
+          - name: Authorization
+            value: "Bearer {{ jwt_token }}"
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+  # ════════════════════════════════════════════════════════
+  # NOTIFICATIONS
+  # ════════════════════════════════════════════════════════
+  - name: Notifications
+    meta:
+      id: fld_notif_001
+      created: 1780300000000
+      modified: 1780300000000
+      sortKey: -370
+      description: "Per-device push notification preferences. Access requires ownership OR accepted invitation."
+    children:
+
+      - url: "{{ base_url }}/api/notifications"
+        name: GET /notifications — my prefs
+        meta:
+          id: req_notif_get
+          created: 1780300000000
+          modified: 1780300000000
+          isPrivate: false
+          description: "Returns {prefs: {device_id: bool}}. Empty object if no prefs set yet."
+          sortKey: -380
+        method: GET
+        headers:
+          - name: Authorization
+            value: "Bearer {{ jwt_token }}"
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+      - url: "{{ base_url }}/api/notifications/{{ device_db_id }}"
+        name: PUT /notifications/:deviceId — enable for device
+        meta:
+          id: req_notif_enable
+          created: 1780300000000
+          modified: 1780300000000
+          isPrivate: false
+          description: "Enable push notifications for a device (owner or accepted invitee). Returns {ok: true}."
+          sortKey: -379
+        method: PUT
+        body:
+          mimeType: application/json
+          text: |-
+            {
+              "enabled": true
+            }
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: Authorization
+            value: "Bearer {{ jwt_token }}"
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+      - url: "{{ base_url }}/api/notifications/{{ device_db_id }}"
+        name: PUT /notifications/:deviceId — disable for device
+        meta:
+          id: req_notif_disable
+          created: 1780300000000
+          modified: 1780300000000
+          isPrivate: false
+          description: "Disable push notifications for a device."
+          sortKey: -378
+        method: PUT
+        body:
+          mimeType: application/json
+          text: |-
+            {
+              "enabled": false
+            }
+        headers:
+          - name: Content-Type
+            value: application/json
+          - name: Authorization
+            value: "Bearer {{ jwt_token }}"
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+      - url: "{{ base_url }}/api/notifications/9999"
+        name: PUT /notifications/9999 ❌ no access (403)
+        meta:
+          id: req_notif_forbidden
+          created: 1780300000000
+          modified: 1780300000000
+          isPrivate: false
+          description: "Device 9999 not owned and not shared with current user — should return 403."
+          sortKey: -377
+        method: PUT
+        body:
+          mimeType: application/json
+          text: |-
+            {
+              "enabled": true
+            }
+        headers:
+          - name: Content-Type
+            value: application/json
           - name: Authorization
             value: "Bearer {{ jwt_token }}"
         settings:
@@ -431,7 +811,7 @@ collection:
     meta:
       id: fld_sosdata_001
       created: 1780200000000
-      modified: 1780200000000
+      modified: 1780300000000
       sortKey: -500
       description: "SOS event payloads sent by the firmware."
     children:
@@ -441,9 +821,9 @@ collection:
         meta:
           id: req_data_sos
           created: 1780200000000
-          modified: 1780200000000
+          modified: 1780300000000
           isPrivate: false
-          description: "Triggers a real SOS — broadcasts to all WebSocket clients and saves to history."
+          description: "Triggers a real SOS. WS event shape: {type:'sos', event:{id, timestamp, synced_at, button_pressed, device_name, device_db_id, owner_name}}. Delivered only to owner + accepted invitees."
           sortKey: -510
         method: POST
         body:
@@ -499,9 +879,9 @@ collection:
     meta:
       id: fld_alerts_001
       created: 1780200000000
-      modified: 1780200000000
+      modified: 1780300000000
       sortKey: -600
-      description: "SOS history. Each user sees only alerts from their own devices."
+      description: "SOS history. Each user sees alerts from owned devices + accepted-invitation devices. Includes owner_name field."
     children:
 
       - url: "{{ base_url }}/api/alerts/sos"
@@ -509,9 +889,9 @@ collection:
         meta:
           id: req_alerts_list
           created: 1780200000000
-          modified: 1780200000000
+          modified: 1780300000000
           isPrivate: false
-          description: "All alerts from the current user's devices. Each alert includes device_name. Newest first."
+          description: "Alerts from own + accepted-invitation devices. Each alert includes device_name, owner_name. Newest first."
           sortKey: -610
         method: GET
         headers:
@@ -552,7 +932,7 @@ collection:
           modified: 1780200000000
           isPrivate: false
           description: "Protected endpoint — should return 401."
-          sortKey: -609
+          sortKey: -608
         method: GET
         settings:
           renderRequestBody: true
@@ -567,21 +947,27 @@ cookieJar:
   meta:
     id: jar_45715b405a4b15f961f440cb3aad8c84efdd7bcd
     created: 1775120803845
-    modified: 1780200000000
+    modified: 1780300000000
 
 environments:
   name: Base Environment
   meta:
     id: env_d5f7c979ca184f068152eff98ce8c597
     created: 1775120803760
-    modified: 1780200000000
+    modified: 1780300000000
     isPrivate: false
   data:
     base_url: "https://app-project.org"
-    # After POST /login — paste token from response
+    # After POST /login (Alice) — paste token from response
     jwt_token: ""
+    # After POST /register or /login (Bob) — paste token from response
+    jwt_token_b: ""
     # After POST /devices — paste id and registration_code
     device_db_id: ""
     registration_code: ""
     # After POST /gateway/register — paste token
     gateway_token: ""
+    # After GET /auth/me as Bob — paste Bob's user id
+    invitee_user_id: ""
+    # After POST /devices/:id/invitations — paste invitation id
+    invitation_id: ""

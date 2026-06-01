@@ -31,27 +31,40 @@ function computeDeviceStatus(device) {
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
 function listDevices(req, res) {
+    const userId = req.user.id;
+
     const rows = db.prepare(`
         SELECT g.id, g.name, g.registration_code, g.reg_code_expires_at,
                g.registered_at, g.last_seen_at, g.warning, g.token,
-               COUNT(se.id) AS sos_count
+               g.owner_id,
+               COALESCE(u.display_name, u.email) AS owner_name,
+               COUNT(se.id) AS sos_count,
+               CASE WHEN g.owner_id = ? THEN 1 ELSE 0 END AS is_owner
         FROM   gateways g
         LEFT JOIN sos_events se ON se.device_db_id = g.id
+        LEFT JOIN users u ON u.id = g.owner_id
         WHERE  g.owner_id = ?
+           OR  g.id IN (
+               SELECT device_id FROM device_invitations
+               WHERE invitee_id = ? AND status = 'accepted'
+           )
         GROUP  BY g.id
         ORDER  BY g.registered_at DESC
-    `).all(req.user.id);
+    `).all(userId, userId, userId);
 
     const devices = rows.map(row => ({
         id:                  row.id,
         name:                row.name,
-        registration_code:   row.registration_code,
-        reg_code_expires_at: row.reg_code_expires_at,
+        registration_code:   row.is_owner ? row.registration_code   : null,
+        reg_code_expires_at: row.is_owner ? row.reg_code_expires_at : null,
         registered_at:       row.registered_at,
         last_seen_at:        row.last_seen_at,
         warning:             row.warning,
         sos_count:           row.sos_count || 0,
         status:              computeDeviceStatus(row),
+        is_owner:            Boolean(row.is_owner),
+        owner_id:            row.owner_id,
+        owner_name:          row.owner_name,
     }));
 
     res.json({ devices });
@@ -92,8 +105,10 @@ function deleteDevice(req, res) {
 
     if (!device) return res.status(404).json({ error: 'Device not found' });
 
-    db.prepare('DELETE FROM sos_events WHERE device_db_id = ?').run(device.id);
-    db.prepare('DELETE FROM gateways   WHERE id = ?').run(device.id);
+    db.prepare('DELETE FROM sos_events          WHERE device_db_id = ?').run(device.id);
+    db.prepare('DELETE FROM device_invitations  WHERE device_id    = ?').run(device.id);
+    db.prepare('DELETE FROM notification_prefs  WHERE device_id    = ?').run(device.id);
+    db.prepare('DELETE FROM gateways            WHERE id           = ?').run(device.id);
     res.json({ ok: true });
 }
 

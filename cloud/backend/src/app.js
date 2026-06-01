@@ -5,10 +5,12 @@ const morgan   = require('morgan');
 const session  = require('express-session');
 const passport = require('./config/passport');
 
-const authRoutes    = require('./routes/auth.routes');
-const deviceRoutes  = require('./routes/devices.routes');
-const gatewayRoutes = require('./routes/gateway.routes');
-const alertRoutes   = require('./routes/alerts.routes');
+const authRoutes         = require('./routes/auth.routes');
+const deviceRoutes       = require('./routes/devices.routes');
+const gatewayRoutes      = require('./routes/gateway.routes');
+const alertRoutes        = require('./routes/alerts.routes');
+const invitationRoutes   = require('./routes/invitations.routes');
+const notificationRoutes = require('./routes/notifications.routes');
 
 const app = express();
 
@@ -34,7 +36,9 @@ app.use(passport.session());
 
 app.use('/api/auth',    authRoutes);
 app.use('/api/devices', deviceRoutes);
-app.use('/api',         gatewayRoutes); // handles /api/gateway/*
+app.use('/api',         gatewayRoutes);   // handles /api/gateway/*
 app.use('/api/alerts',  alertRoutes);
+app.use('/api',         invitationRoutes);  // /api/devices/:id/invitations + /api/invitations/*
+app.use('/api',         notificationRoutes); // /api/notifications[/:deviceId]
 
 module.exports = app;

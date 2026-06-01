@@ -1,12 +1,15 @@
-import { BrowserRouter } from 'react-router-dom';
-import { AuthProvider }  from './context/AuthContext';
-import AppRouter         from './AppRouter';
+import { BrowserRouter }    from 'react-router-dom';
+import { AuthProvider }     from './context/AuthContext';
+import { AlertsProvider }   from './context/AlertsContext';
+import AppRouter            from './AppRouter';
 
 export default function App() {
     return (
         <BrowserRouter>
             <AuthProvider>
-                <AppRouter />
+                <AlertsProvider>
+                    <AppRouter />
+                </AlertsProvider>
             </AuthProvider>
         </BrowserRouter>
     );

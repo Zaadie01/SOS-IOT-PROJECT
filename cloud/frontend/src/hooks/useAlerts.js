@@ -21,7 +21,7 @@ export function useAlerts(token) {
             if (destroyed) return;
             clearTimeout(retryTimeout);
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+            ws = new WebSocket(`${protocol}//${window.location.host}/ws?token=${encodeURIComponent(token)}`);
 
             ws.onclose = () => {
                 if (!destroyed) retryTimeout = setTimeout(connect, 3000);

@@ -92,3 +92,54 @@ export async function fetchAlerts() {
     const json = await apiFetch('/alerts/sos');
     return json.alerts;
 }
+
+// ── Invitations (owner side) ──────────────────────────────────────────────────
+
+export function createInvitation(deviceId, payload) {
+    return apiFetch(`/devices/${deviceId}/invitations`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+    });
+}
+
+export async function listDeviceInvitations(deviceId) {
+    const json = await apiFetch(`/devices/${deviceId}/invitations`);
+    return json.invitations;
+}
+
+export function revokeInvitation(invitationId) {
+    return apiFetch(`/invitations/${invitationId}/revoke`, { method: 'POST' });
+}
+
+export function deleteInvitation(invitationId) {
+    return apiFetch(`/invitations/${invitationId}`, { method: 'DELETE' });
+}
+
+// ── Invitations (invitee side) ────────────────────────────────────────────────
+
+export async function getReceivedInvitations() {
+    const json = await apiFetch('/invitations/received');
+    return json.invitations;
+}
+
+export function acceptInvitation(invitationId) {
+    return apiFetch(`/invitations/${invitationId}/accept`, { method: 'POST' });
+}
+
+export function declineInvitation(invitationId) {
+    return apiFetch(`/invitations/${invitationId}/decline`, { method: 'POST' });
+}
+
+// ── Notification prefs ────────────────────────────────────────────────────────
+
+export async function getNotificationPrefs() {
+    const json = await apiFetch('/notifications');
+    return json.prefs;
+}
+
+export function setNotificationPref(deviceId, enabled) {
+    return apiFetch(`/notifications/${deviceId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ enabled }),
+    });
+}

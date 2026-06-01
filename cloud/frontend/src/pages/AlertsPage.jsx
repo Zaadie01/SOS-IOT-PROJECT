@@ -1,20 +1,17 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import Icon from '@mdi/react';
-import { mdiAlertCircleOutline, mdiBellOffOutline } from '@mdi/js';
-import { useAlerts }          from '../hooks/useAlerts';
-import { useAuth }            from '../context/AuthContext';
-import { fetchDevices }       from '../api';
-import DeviceFilter           from '../components/alerts/DeviceFilter';
-import LastSosIndicator       from '../components/alerts/LastSosIndicator';
-import { formatTime }         from '../utils/time';
+import {
+    mdiAlertCircleOutline, mdiBellOffOutline, mdiBellOutline, mdiBell, mdiRefresh,
+} from '@mdi/js';
+import { useAlertsContext }     from '../context/AlertsContext';
+import { fetchDevices }         from '../api';
+import DeviceFilter             from '../components/alerts/DeviceFilter';
+import LastSosIndicator         from '../components/alerts/LastSosIndicator';
+import { formatTime }           from '../utils/time';
 
 const ITEMS_PER_PAGE = 25;
 
-/**
- * Builds the list of page numbers to show in the pagination bar.
- * Inserts '…' where there are gaps.
- */
 function buildPageRange(currentPage, totalPages) {
     if (totalPages <= 7) return Array.from({ length: totalPages }, (_, i) => i + 1);
 
@@ -32,17 +29,130 @@ function buildPageRange(currentPage, totalPages) {
     return result;
 }
 
-export default function AlertsPage() {
-    const { token }  = useAuth();
-    const alerts     = useAlerts(token);
+// ── Notifications panel — UI only, no push logic ──────────────────────────────
 
-    const [devices, setDevices]                = useState([]);
-    const [searchParams, setSearchParams]      = useSearchParams();
-    const [selectedDeviceId, setSelectedRaw]   = useState(() => {
+function NotificationsPanel({ devices, prefs, updatePref }) {
+    const [permission, setPermission] = useState(() => Notification.permission);
+    const [masterOn, setMasterOn]     = useState(() =>
+        Notification.permission === 'granted' && Object.values(prefs).some(Boolean)
+    );
+    const [search, setSearch] = useState('');
+
+    // Sync masterOn if prefs arrive after mount
+    useEffect(() => {
+        if (permission === 'granted' && Object.values(prefs).some(Boolean)) {
+            setMasterOn(true);
+        }
+    }, [prefs, permission]);
+
+    async function requestPermission() {
+        const result = await Notification.requestPermission();
+        setPermission(result);
+        if (result === 'granted') setMasterOn(true);
+    }
+
+    const registeredDevices = devices.filter(d => d.status !== 'pending');
+
+    const visibleDevices = useMemo(() => {
+        if (!search.trim()) return registeredDevices;
+        const q = search.toLowerCase();
+        return registeredDevices.filter(d =>
+            d.name?.toLowerCase().includes(q) || String(d.id).includes(q)
+        );
+    }, [registeredDevices, search]); // eslint-disable-line
+
+    return (
+        <div className="card border-0 shadow-sm mb-4">
+            <div className="card-header bg-white border-bottom d-flex align-items-center gap-2 py-2">
+                <Icon path={mdiBell} size={0.75} />
+                <span className="fw-medium small">Push Notifications</span>
+            </div>
+            <div className="card-body py-3">
+                {permission === 'denied' ? (
+                    <p className="text-muted small mb-0">
+                        Notifications are blocked by your browser. Enable them in browser settings.
+                    </p>
+                ) : permission !== 'granted' ? (
+                    <div className="d-flex align-items-center gap-3">
+                        <p className="text-muted small mb-0">Enable browser notifications to get SOS alerts.</p>
+                        <button className="btn btn-outline-primary btn-sm" onClick={requestPermission}>
+                            <Icon path={mdiBellOutline} size={0.65} className="me-1" />
+                            Enable
+                        </button>
+                    </div>
+                ) : (
+                    <>
+                        <div className="form-check form-switch mb-2">
+                            <input
+                                className="form-check-input"
+                                type="checkbox"
+                                id="master-notif"
+                                checked={masterOn}
+                                onChange={e => setMasterOn(e.target.checked)}
+                            />
+                            <label className="form-check-label small fw-medium" htmlFor="master-notif">
+                                Notifications enabled
+                            </label>
+                        </div>
+                        {masterOn && registeredDevices.length > 0 && (
+                            <div className="ps-2">
+                                <input
+                                    type="text"
+                                    className="form-control form-control-sm mb-2"
+                                    placeholder="Filter devices…"
+                                    value={search}
+                                    onChange={e => setSearch(e.target.value)}
+                                />
+                                <div style={{ maxHeight: 240, overflowY: 'auto' }}>
+                                    {visibleDevices.map(d => (
+                                        <div key={d.id} className="form-check form-switch mb-1">
+                                            <input
+                                                className="form-check-input"
+                                                type="checkbox"
+                                                id={`notif-${d.id}`}
+                                                checked={Boolean(prefs[d.id])}
+                                                onChange={e => updatePref(d.id, e.target.checked)}
+                                            />
+                                            <label
+                                                className="form-check-label small"
+                                                htmlFor={`notif-${d.id}`}
+                                            >
+                                                {d.name}
+                                                {!d.is_owner && (
+                                                    <span className="text-muted ms-1" style={{ fontSize: '0.7rem' }}>
+                                                        ({d.owner_name})
+                                                    </span>
+                                                )}
+                                            </label>
+                                        </div>
+                                    ))}
+                                    {visibleDevices.length === 0 && (
+                                        <p className="text-muted small mb-0">No devices match.</p>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                    </>
+                )}
+            </div>
+        </div>
+    );
+}
+
+// ── Page ──────────────────────────────────────────────────────────────────────
+
+export default function AlertsPage() {
+    const { alerts, prefs, refresh, updatePref } = useAlertsContext();
+
+    const [devices, setDevices]               = useState([]);
+    const [searchParams, setSearchParams]     = useSearchParams();
+    const [selectedDeviceId, setSelectedRaw]  = useState(() => {
         const param = searchParams.get('device');
         return param ? Number(param) : null;
     });
-    const [currentPage, setCurrentPage]        = useState(1);
+    const [currentPage, setCurrentPage]       = useState(1);
+    const [showNotifPanel, setShowNotifPanel] = useState(false);
+    const [isRefreshing, setRefreshing]       = useState(false);
 
     function selectDevice(id) {
         setSelectedRaw(id);
@@ -50,13 +160,11 @@ export default function AlertsPage() {
         else    setSearchParams({},             { replace: true });
     }
 
-    // Load registered devices for the filter dropdown
-    useEffect(() => {
+    const loadDevices = useCallback(() => {
         fetchDevices()
             .then(list => {
                 const registeredOnly = list.filter(d => d.status !== 'pending');
                 setDevices(registeredOnly);
-                // Clear the URL filter if the device no longer belongs to the user
                 if (selectedDeviceId && !registeredOnly.find(d => d.id === selectedDeviceId)) {
                     selectDevice(null);
                 }
@@ -64,8 +172,19 @@ export default function AlertsPage() {
             .catch(() => {});
     }, []); // eslint-disable-line
 
-    // Reset to page 1 whenever the filter or the alert list changes
+    // On mount: load devices + re-fetch alerts (removes stale rows from deleted devices)
+    useEffect(() => {
+        loadDevices();
+        refresh();
+    }, []); // eslint-disable-line
+
     useEffect(() => { setCurrentPage(1); }, [selectedDeviceId, alerts.length]);
+
+    async function handleRefresh() {
+        setRefreshing(true);
+        try { await Promise.all([refresh(), loadDevices()]); }
+        finally { setRefreshing(false); }
+    }
 
     const filteredAlerts = useMemo(() =>
         selectedDeviceId
@@ -74,7 +193,7 @@ export default function AlertsPage() {
         [alerts, selectedDeviceId]
     );
 
-    const totalPages     = Math.ceil(filteredAlerts.length / ITEMS_PER_PAGE);
+    const totalPages      = Math.ceil(filteredAlerts.length / ITEMS_PER_PAGE);
     const paginatedAlerts = filteredAlerts.slice(
         (currentPage - 1) * ITEMS_PER_PAGE,
         currentPage * ITEMS_PER_PAGE
@@ -101,14 +220,49 @@ export default function AlertsPage() {
                     />
                 </div>
 
-                {devices.length > 0 && (
-                    <DeviceFilter
-                        devices={devices}
-                        value={selectedDeviceId}
-                        onChange={selectDevice}
-                    />
-                )}
+                <div className="d-flex align-items-center gap-2 flex-wrap">
+                    <button
+                        className="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1"
+                        onClick={handleRefresh}
+                        disabled={isRefreshing}
+                        title="Refresh alerts"
+                    >
+                        <Icon
+                            path={mdiRefresh}
+                            size={0.75}
+                            style={isRefreshing
+                                ? { animation: 'spin 0.7s linear infinite' }
+                                : undefined}
+                        />
+                        Refresh
+                    </button>
+
+                    <button
+                        className="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1"
+                        onClick={() => setShowNotifPanel(v => !v)}
+                    >
+                        <Icon path={mdiBellOutline} size={0.7} />
+                        Notifications
+                    </button>
+
+                    {devices.length > 0 && (
+                        <DeviceFilter
+                            devices={devices}
+                            value={selectedDeviceId}
+                            onChange={selectDevice}
+                        />
+                    )}
+                </div>
             </div>
+
+            {/* Notification panel (collapsible, UI-only) */}
+            {showNotifPanel && (
+                <NotificationsPanel
+                    devices={devices}
+                    prefs={prefs}
+                    updatePref={updatePref}
+                />
+            )}
 
             {/* Empty state */}
             {alerts.length === 0 ? (
@@ -126,6 +280,7 @@ export default function AlertsPage() {
                                     <th className="text-muted small fw-medium ps-4">#</th>
                                     <th className="text-muted small fw-medium">Device</th>
                                     <th className="text-muted small fw-medium">Device ID</th>
+                                    <th className="text-muted small fw-medium">Owner</th>
                                     <th className="text-muted small fw-medium">Time</th>
                                 </tr>
                             </thead>
@@ -139,6 +294,7 @@ export default function AlertsPage() {
                                             <td className="text-muted small">
                                                 {alert.device_db_id ? `#${alert.device_db_id}` : '—'}
                                             </td>
+                                            <td className="text-muted small">{alert.owner_name || '—'}</td>
                                             <td className="text-muted small">{formatTime(alert.timestamp)}</td>
                                         </tr>
                                     );

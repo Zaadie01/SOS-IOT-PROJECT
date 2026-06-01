@@ -39,17 +39,30 @@ function handleSosData(req, res) {
         VALUES (?, ?, ?, ?)
     `).run(eventTime, req.body.button_pressed ?? null, gateway.id, now);
 
+    const owner = db.prepare(
+        'SELECT COALESCE(display_name, email) AS name FROM users WHERE id = ?'
+    ).get(gateway.owner_id);
+
     const sosEvent = {
-        id:            lastInsertRowid,
-        timestamp:     eventTime,
-        synced_at:     now,
+        id:             lastInsertRowid,
+        timestamp:      eventTime,
+        synced_at:      now,
         button_pressed: req.body.button_pressed,
-        device_name:   gateway.name,
-        device_db_id:  gateway.id,
+        device_name:    gateway.name,
+        device_db_id:   gateway.id,
+        owner_name:     owner?.name ?? null,
     };
 
     console.log(`🚨 SOS from "${gateway.name}"`);
-    ws.broadcast({ type: 'sos', event: sosEvent });
+
+    // Deliver only to owner + accepted invitees (fixes global broadcast leak)
+    const inviteeRows = db.prepare(`
+        SELECT invitee_id FROM device_invitations
+        WHERE device_id = ? AND status = 'accepted'
+    `).all(gateway.id);
+
+    const recipients = [gateway.owner_id, ...inviteeRows.map(r => r.invitee_id)];
+    ws.sendToUsers(recipients, { type: 'sos', event: sosEvent });
 
     res.status(201).json({ success: true, id: lastInsertRowid });
 }

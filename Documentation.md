@@ -105,15 +105,24 @@
 9.  Backend inserts a row into sos_events:
     { timestamp, button_pressed, device_db_id: gateway.id, synced_at: now }
 
-10. Backend broadcasts to all connected WebSocket clients:
-    { "type": "sos", "event": { id, timestamp, button_pressed,
-                                device_name, device_db_id, synced_at } }
+10. Backend resolves recipients: device owner + all accepted invitees
+    (SELECT invitee_id FROM device_invitations WHERE device_id = ? AND status = 'accepted')
+    Sends WS message only to those users' connected sockets:
+    {
+      "type": "sos",
+      "event": {
+        "id": 42, "timestamp": …, "synced_at": …, "button_pressed": 3,
+        "device_name": "Office Button", "device_db_id": 1, "owner_name": "Alice"
+      }
+    }
 
 11. Gateway marks the event as sent (sent_at = now) in local SQLite
 
-12. Browser receives the WebSocket message instantly
-13. React prepends the new alert to state — alert history updates with
-    no page refresh needed; LastSosIndicator shows red for 5 minutes
+12. Each recipient's browser receives the WebSocket message instantly
+13. React prepends the new alert to state — history updates with no page refresh
+    If the browser permission is granted and the device has notifications
+    enabled → browser push notification fires, even if the user is on a
+    different tab or the Notifications panel is closed
 ```
 
 ### Device Registration Flow (Dashboard → Firmware)
@@ -140,18 +149,47 @@
 7. Device status in dashboard changes: pending → offline → online (after ping)
 ```
 
+### Invitation Flow (share device access)
+
+```
+1. Owner (Alice) opens a device card → Share → Manage Access modal
+2. Alice enters Bob's User ID (or email) → Send invitation
+3. POST /api/devices/:id/invitations { user_id: N }
+   ← 201 { id: <inv_id>, status: "pending" }
+
+4. Bob opens his dropdown → "Invitations" (red badge = 1 pending)
+5. Bob clicks Accept → POST /api/invitations/:id/accept
+   ← status changes to "accepted"
+
+6. Bob now sees Alice's device in GET /api/devices (is_owner: false)
+   registration_code is null; Rename/Delete/Share buttons are hidden
+
+7. Bob sees Alice's device alerts in GET /api/alerts/sos
+
+8. When Alice's device fires SOS, the WS message goes to Alice AND Bob
+   (if Bob has notifications enabled → browser push fires for Bob too)
+
+9. Alice can revoke at any time → POST /api/invitations/:id/revoke
+   Bob's access is removed immediately; notification_prefs cleaned up
+```
+
 ### WebSocket Connection Lifecycle
 
 ```
 Browser opens app-project.org
-  → React app loads (served by nginx via Caddy)
-  → useAlerts hook: fetches GET /api/alerts/sos (initial history load)
-  → Opens WebSocket: wss://app-project.org/ws
+  → React app loads; AlertsProvider mounts (inside AuthProvider)
+  → Fetches GET /api/alerts/sos — records baseline alert ID
+  → Loads GET /api/notifications — loads per-device push prefs
+  → Opens WebSocket: wss://app-project.org/ws?token=<JWT>
        → Caddy proxies /ws to backend:3001 (HTTP upgrade)
+       → Server verifies JWT from query string, stores userId on socket
        → Connection established
 
 From this point:
-  → New SOS events pushed instantly — no polling
+  → SOS events pushed only to owner + accepted invitees (not broadcast to all)
+  → Push notification fired if: permission granted + device pref enabled
+    + alert ID > baseline (prevents false push on first load)
+  → WebSocket survives route changes (AlertsProvider lives at app root)
   → DevicesPage auto-refreshes every 15 s (status, last ping, SOS count)
   → Disconnect: reconnects automatically every 3 s
   → Browser goes offline (window 'offline' event): ws.close()
@@ -313,29 +351,34 @@ Express.js + Passport.js + SQLite + WebSocket, running inside Docker.
 
 ```
 src/
-├── server.js                  — HTTP server + WebSocket + SIGINT handler
-├── app.js                     — Express middleware + route mounting
-├── websocket.js               — WebSocket init and broadcast
+├── server.js                      — HTTP server + WebSocket + SIGINT handler
+├── app.js                         — Express middleware + route mounting
+├── websocket.js                   — WebSocket init, JWT auth on connect,
+│                                    broadcast(), sendToUsers()
 ├── config/
-│   └── passport.js            — Local, JWT, Google OAuth strategies
+│   └── passport.js                — Local, JWT, Google OAuth strategies
 ├── db/
-│   ├── index.js               — DB connection (exports db singleton)
-│   ├── schema.js              — Table creation + migrations
-│   └── cleanup.js             — Expired device cleanup job
+│   ├── index.js                   — DB connection (exports db singleton)
+│   ├── schema.js                  — Table creation + migrations
+│   └── cleanup.js                 — Expired device cleanup job
 ├── middleware/
-│   ├── auth.js                — requireAuth (JWT Bearer)
-│   ├── gateway.js             — requireGateway (x-gateway-token)
-│   └── validate.js            — express-validator result checker
+│   ├── auth.js                    — requireAuth (JWT Bearer)
+│   ├── gateway.js                 — requireGateway (x-gateway-token)
+│   └── validate.js                — express-validator result checker
 ├── routes/
-│   ├── auth.routes.js         — Route definitions for /api/auth/*
-│   ├── devices.routes.js      — Route definitions for /api/devices/*
-│   ├── gateway.routes.js      — Route definitions for /api/gateway/*
-│   └── alerts.routes.js       — Route definitions for /api/alerts/*
+│   ├── auth.routes.js             — /api/auth/*
+│   ├── devices.routes.js          — /api/devices/*
+│   ├── gateway.routes.js          — /api/gateway/*
+│   ├── alerts.routes.js           — /api/alerts/*
+│   ├── invitations.routes.js      — /api/devices/:id/invitations, /api/invitations/*
+│   └── notifications.routes.js   — /api/notifications[/:deviceId]
 └── controllers/
-    ├── auth.controller.js     — register, login, Google OAuth handlers
-    ├── devices.controller.js  — CRUD handlers + status computation
-    ├── gateway.controller.js  — register, SOS data, ping, warning handlers
-    └── alerts.controller.js   — SOS history handler
+    ├── auth.controller.js         — register, login, Google OAuth handlers
+    ├── devices.controller.js      — CRUD + status computation
+    ├── gateway.controller.js      — register, SOS data, ping, warning handlers
+    ├── alerts.controller.js       — SOS history (owner + accepted invitees)
+    ├── invitations.controller.js  — invitation CRUD (owner & invitee sides)
+    └── notifications.controller.js — per-device push notification prefs
 ```
 
 ### Database Schema
@@ -376,6 +419,37 @@ src/
 | `device_db_id` | INTEGER | FK → gateways.id |
 | `synced_at` | INTEGER | Server receive time (used for sorting) |
 
+**Table `device_invitations`** — shared device access:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER | Auto-increment PK |
+| `device_id` | INTEGER | FK → gateways.id |
+| `inviter_id` | INTEGER | FK → users.id (owner who sent the invite) |
+| `invitee_id` | INTEGER | FK → users.id (user being invited) |
+| `status` | TEXT | `pending` \| `accepted` \| `declined` \| `revoked` |
+| `created_at` | INTEGER | Unix ms — when invitation was created / last resent |
+| `responded_at` | INTEGER | Unix ms — when invitee accepted or declined |
+
+Unique constraint: `(device_id, invitee_id)`.
+
+Status transitions:
+- Owner creates → `pending`
+- Invitee: `pending` → `accepted` or `declined`
+- Owner: `pending` or `accepted` → `revoked`
+- Owner: delete row (any status)
+- Owner resends after `declined` or `revoked` → resets to `pending`
+
+**Table `notification_prefs`** — per-device push notification opt-in:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `user_id` | INTEGER | FK → users.id |
+| `device_id` | INTEGER | FK → gateways.id |
+| `enabled` | INTEGER | `1` = enabled, `0` = disabled |
+
+Primary key: `(user_id, device_id)`. Only users with access (owner or accepted invitee) can set a pref.
+
 ### API Endpoints
 
 #### Auth
@@ -394,12 +468,38 @@ src/
 
 | Method | URL | Description |
 |--------|-----|-------------|
-| `GET` | `/api/devices` | List user's devices with computed status |
-| `POST` | `/api/devices` | Create device slot, returns registration code |
-| `PATCH` | `/api/devices/:id` | Rename device |
-| `DELETE` | `/api/devices/:id` | Delete device and its SOS history |
+| `GET` | `/api/devices` | List own + accepted-invitation devices. Each device includes `is_owner`, `owner_id`, `owner_name`. `registration_code` is `null` for non-owners. |
+| `POST` | `/api/devices` | Create device slot, returns registration code. Owner only. |
+| `PATCH` | `/api/devices/:id` | Rename device. Owner only. |
+| `DELETE` | `/api/devices/:id` | Delete device, SOS history, all invitations, and notification prefs. Owner only. |
 
-#### Gateway (firmware → server, requires x-gateway-token except register)
+#### Invitations (all require JWT)
+
+**Owner side:**
+
+| Method | URL | Description |
+|--------|-----|-------------|
+| `POST` | `/api/devices/:id/invitations` | Invite a user by `user_id` or `email`. Returns 201 `{id, status:"pending"}`. 409 if already `pending`\|`accepted`; resends if `declined`\|`revoked`. |
+| `GET` | `/api/devices/:id/invitations` | List all invitations for a device: `id`, `invitee_id`, `invitee_name`, `invitee_email`, `status`, `created_at`. |
+| `POST` | `/api/invitations/:id/revoke` | Revoke a `pending` or `accepted` invitation. Removes the invitee's notification prefs. |
+| `DELETE` | `/api/invitations/:id` | Permanently delete an invitation row (any status). |
+
+**Invitee side:**
+
+| Method | URL | Description |
+|--------|-----|-------------|
+| `GET` | `/api/invitations/received` | My incoming invitations: `id`, `device_id`, `device_name`, `owner_name`, `status`, `created_at`. |
+| `POST` | `/api/invitations/:id/accept` | Accept a `pending` invitation. |
+| `POST` | `/api/invitations/:id/decline` | Decline a `pending` invitation. |
+
+#### Notifications (all require JWT)
+
+| Method | URL | Description |
+|--------|-----|-------------|
+| `GET` | `/api/notifications` | Get all push notification prefs: `{ prefs: { [device_id]: bool } }`. |
+| `PUT` | `/api/notifications/:deviceId` | Enable or disable push for a device. Body: `{ enabled: true\|false }`. 403 if no access. |
+
+#### Gateway (requires `x-gateway-token` except register)
 
 | Method | URL | Description |
 |--------|-----|-------------|
@@ -412,8 +512,8 @@ src/
 
 | Method | URL | Description |
 |--------|-----|-------------|
-| `GET` | `/api/alerts/sos` | SOS history for user's devices |
-| `GET` | `/api/alerts/sos?device_id=N` | Filtered by specific device |
+| `GET` | `/api/alerts/sos` | SOS history for own + accepted-invitation devices. Each alert includes `owner_name`. |
+| `GET` | `/api/alerts/sos?device_id=N` | Same, filtered by a specific device. |
 
 ### Device Status Logic
 
@@ -432,7 +532,14 @@ now - last_seen_at ≥ 5 min  → offline
 Server path: `/ws`
 Public URL: `wss://app-project.org/ws`
 
-On SOS event received, backend broadcasts to all connected clients:
+The client connects with a JWT in the query string:
+```
+wss://app-project.org/ws?token=<JWT>
+```
+
+On connect, the server verifies the JWT and stores `userId` on the socket. This enables **targeted delivery**: SOS events are sent only to the device owner and all users with an accepted invitation, not broadcast globally.
+
+SOS event shape (identical for WebSocket push and `GET /api/alerts/sos` rows):
 
 ```json
 {
@@ -443,7 +550,8 @@ On SOS event received, backend broadcasts to all connected clients:
     "synced_at": 1700000000100,
     "button_pressed": 3,
     "device_name": "Office Button",
-    "device_db_id": 1
+    "device_db_id": 1,
+    "owner_name": "Alice"
   }
 }
 ```
@@ -460,26 +568,30 @@ React 18 SPA, compiled to static files served by nginx.
 
 ```
 src/
-├── index.js                — Bootstrap CSS + ReactDOM entry point
-├── App.js                  — BrowserRouter + AuthProvider
-├── AppRouter.jsx           — All <Route> definitions
-├── App.css                 — Global styles (Inter font, Bootstrap overrides)
+├── index.js                      — Bootstrap CSS + ReactDOM entry point
+├── App.js                        — BrowserRouter + AuthProvider + AlertsProvider
+├── AppRouter.jsx                 — All <Route> definitions
+├── App.css                       — Global styles (Inter font, Bootstrap overrides)
 ├── api/
-│   └── index.js            — Unified API client (JWT auth, 401 handling)
+│   └── index.js                  — Unified API client (JWT auth, 401 handling,
+│                                   all invitation + notification helpers)
 ├── context/
-│   └── AuthContext.js      — JWT token + user state in localStorage
+│   ├── AuthContext.js            — JWT token + user state in localStorage
+│   └── AlertsContext.js          — Global WS connection, alerts state,
+│                                   notification prefs, push dispatch
 ├── hooks/
-│   └── useAlerts.js        — Fetch SOS history + WebSocket live updates
+│   └── useAlerts.js              — Legacy standalone hook (not used by AlertsPage)
 ├── utils/
-│   └── time.js             — formatTime helper (HH:MM:SS, DD/MM/YYYY)
+│   └── time.js                   — formatTime helper (HH:MM:SS, DD/MM/YYYY)
 ├── components/
 │   ├── auth/ProtectedRoute.jsx
-│   ├── layout/Navbar.jsx
+│   ├── layout/Navbar.jsx         — User dropdown: ID #N, Invitations badge,
+│   │                               InvitationsModal (accept / decline inbox)
 │   ├── common/
 │   │   ├── GoogleLogo.jsx
 │   │   └── StatusBadge.jsx
 │   ├── devices/
-│   │   ├── DeviceModal.jsx  — Add / Rename / Delete / Show code modals
+│   │   ├── DeviceModal.jsx       — Add / Rename / Delete / Show code modals
 │   │   └── CodeBanner.jsx
 │   └── alerts/
 │       ├── DeviceFilter.jsx
@@ -488,9 +600,30 @@ src/
     ├── LandingPage.jsx
     ├── LoginPage.jsx
     ├── RegisterPage.jsx
-    ├── DevicesPage.jsx      — Device grid, search/sort/filter, auto-refresh 15 s
-    └── AlertsPage.jsx       — SOS history table, pagination (25/page), device filter
+    ├── DevicesPage.jsx            — Device grid with owner badge, Share button,
+    │                                ShareModal (invite form + invitations list),
+    │                                Rename/Delete/Show code hidden for non-owners
+    └── AlertsPage.jsx             — SOS history table + Owner column,
+                                     Notifications panel (master toggle + per-device
+                                     checklist), push fired from AlertsContext
 ```
+
+### Context Architecture
+
+```
+<BrowserRouter>
+  <AuthProvider>          ← JWT token + user, persisted to localStorage
+    <AlertsProvider>      ← Single WS connection + alerts + prefs + push logic
+      <AppRouter />       ← Routes, Navbar, Pages
+    </AlertsProvider>
+  </AuthProvider>
+</BrowserRouter>
+```
+
+`AlertsProvider` is mounted at the app root (not inside any page component). This means:
+- **One WebSocket** per session — no duplicate connections when navigating between pages
+- **Push notifications fire globally** — independent of which page is open and whether the Notifications panel is visible
+- **Baseline protection** — the newest historic alert ID is recorded at load time; only events with a higher ID trigger a push, preventing false notifications on first load
 
 ### Routes
 
@@ -502,6 +635,27 @@ src/
 | `/devices` | ✅ | Device management |
 | `/alerts` | ✅ | SOS alert history |
 | `/alerts?device=N` | ✅ | Alerts pre-filtered by device |
+
+### Push Notification Flow
+
+```
+1. User opens Alerts → Notifications panel → clicks "Enable"
+   → Notification.requestPermission() → browser prompts
+   → On grant: per-device checklist appears
+
+2. User checks a device → PUT /api/notifications/:deviceId { enabled: true }
+   → pref stored in DB and in AlertsContext.prefs
+
+3. SOS arrives via WebSocket in AlertsContext:
+   a. Alert prepended to state (AlertsPage updates instantly)
+   b. event.id > baselineId?          → yes, continue
+   c. Notification.permission === 'granted'?  → yes, continue
+   d. prefs[event.device_db_id] === true?     → yes, fire push
+   → new Notification("SOS: Office Button", { body: "14:32:01 01/06/2026" })
+
+4. Push fires regardless of current route (Devices, Alerts, or any other)
+   Push fires even if the Notifications panel is collapsed
+```
 
 ### Authentication Flow
 
@@ -584,6 +738,7 @@ All containers use `restart: unless-stopped`:
 | Token issuance | JWT, signed with `JWT_SECRET`, 8-hour expiry |
 | Protected routes | `requireAuth` middleware (passport-jwt) |
 | Google OAuth | Passport.js Google strategy; auto-links if email matches |
+| WebSocket auth | JWT passed in `?token=` query string; verified on connect |
 
 ### Device Authentication
 
@@ -595,11 +750,16 @@ All containers use `restart: unless-stopped`:
 | Token storage (cloud) | `gateways.token` in SQLite |
 | Token storage (gateway) | `gateway_meta` table in local SQLite |
 
-### Ownership & Isolation
+### Ownership & Access Control
 
-- Each device belongs to one user (`owner_id`)
-- `GET /api/devices` and `GET /api/alerts/sos` only return rows where `owner_id = req.user.id`
-- Attempting to rename/delete another user's device returns **404**
+- Each device belongs to one owner (`owner_id`)
+- **Owner** can: Rename, Delete, Show registration code, Share (invite), Revoke/Delete invitations
+- **Accepted invitee** can: View device and its alerts, enable/disable push notifications
+- **Non-invited user** sees nothing — not in `GET /api/devices`, not in alerts, no WS delivery
+- `GET /api/devices` returns own devices + accepted-invitation devices; `registration_code` is `null` for non-owners
+- `GET /api/alerts/sos` returns alerts from own + accepted-invitation devices
+- Rename/Delete a device owned by another user → **404**
+- Setting a notification pref for a device without access → **403**
 
 ### What Is Protected
 
@@ -610,6 +770,8 @@ All containers use `restart: unless-stopped`:
 | `GET /api/auth/me` | JWT required |
 | `GET /api/devices` and children | JWT required |
 | `GET /api/alerts/sos` | JWT required |
+| `GET|POST /api/invitations/*` | JWT required; ownership/invitee checked per action |
+| `GET|PUT /api/notifications/*` | JWT required; access verified before write |
 | `POST /api/gateway/register` | Valid registration code required |
 | `POST /api/gateway/data` | Per-device token required |
 | `POST /api/gateway/ping` | Per-device token required |
@@ -621,7 +783,7 @@ All secrets are in `.env` files, never committed to git:
 
 | Secret | File | Used for |
 |--------|------|---------|
-| `JWT_SECRET` | `cloud/backend/.env` | Signing user JWTs |
+| `JWT_SECRET` | `cloud/backend/.env` | Signing user JWTs (also verified on WS connect) |
 | `SESSION_SECRET` | `cloud/backend/.env` | Google OAuth session |
 | `GOOGLE_CLIENT_ID` | `cloud/backend/.env` | Google OAuth |
 | `GOOGLE_CLIENT_SECRET` | `cloud/backend/.env` | Google OAuth |
@@ -718,38 +880,79 @@ ssh deploy@<YOUR_SERVER> "docker exec sos-backend node -e \
 
 Import `cloud/insomnia.yaml` into Insomnia. Set `base_url = https://app-project.org` in the environment.
 
+### Environment Variables
+
+| Variable | Where to get it |
+|----------|----------------|
+| `jwt_token` | Response of `POST /auth/login` (Alice) |
+| `jwt_token_b` | Response of `POST /auth/register` or `/login` (Bob) |
+| `device_db_id` | Response of `POST /devices` → `id` |
+| `registration_code` | Response of `POST /devices` → `registration_code` |
+| `gateway_token` | Response of `POST /gateway/register` → `token` |
+| `invitee_user_id` | Response of `GET /auth/me` with `jwt_token_b` → `user.id` |
+| `invitation_id` | Response of `POST /devices/:id/invitations` → `id` |
+
 ### Recommended test order
 
 ```
-1. Auth → POST /register         → copy token → jwt_token
-2. Auth → POST /login            → verify token works
-3. Auth → GET /me                → check user fields
+── Core flow ────────────────────────────────────────────────────────────────
+1.  Auth → POST /register (Alice)    → copy token → jwt_token
+2.  Auth → POST /login (Alice)       → verify token works
+3.  Auth → GET /me                   → confirm id, email
 
-4. Devices → POST /devices       → copy id → device_db_id
-                                   copy registration_code → registration_code
-5. Devices → GET /devices        → status should be "pending"
+4.  Devices → POST /devices          → copy id → device_db_id
+                                       copy registration_code → registration_code
+5.  Devices → GET /devices           → status "pending"; is_owner=true
 
-6. Gateway → POST /gateway/register  → copy token → gateway_token
-7. Devices → GET /devices            → status should be "offline"
+6.  Gateway → POST /gateway/register → copy token → gateway_token
+7.  Devices → GET /devices           → status "offline"
 
-8. Gateway → POST /gateway/ping      → status becomes "online"
-9. SOS Data → POST /gateway/data ✅  → sends SOS
-10. Alerts → GET /alerts/sos         → alert appears with device_name
+8.  Gateway → POST /gateway/ping     → status becomes "online"
+9.  SOS Data → POST /gateway/data ✅ → SOS fires (WS delivers to Alice only)
+10. Alerts → GET /alerts/sos         → alert appears; owner_name = "Alice"
 
 11. Gateway → POST /gateway/warning  → device status = "warning"
 12. Gateway → POST /gateway/warning (clear) → status returns to online/offline
 
 13. Devices → PATCH → rename
 14. Alerts → GET /alerts/sos?device_id=N → filter works
-15. Devices → DELETE → device + history removed
+15. Notifications → PUT /notifications/:id { enabled:true } → 200 ok
+16. Notifications → GET /notifications → pref shows true for device
 
---- Negative cases ---
-Auth    → POST /login wrong password → 401
-Devices → GET /devices no token      → 401
-Devices → DELETE /devices/9999       → 404 (not owner)
-Gateway → POST /gateway/data no token → 401
-Gateway → POST /gateway/register bad code → 401
-Auth    → GET /api/auth/google (no GOOGLE_CLIENT_ID) → 503
+── Invitation flow (two accounts) ───────────────────────────────────────────
+17. Auth → POST /register (Bob)      → copy token → jwt_token_b
+18. Auth → GET /me (Bob)             → copy id → invitee_user_id
+
+19. Invitations → POST /devices/:id/invitations { user_id: invitee_user_id }
+                                     → copy id → invitation_id; status = pending
+20. Invitations → GET /devices/:id/invitations → list shows pending row
+
+21. Invitations → GET /invitations/received (Bob / jwt_token_b)
+                                     → inbox shows pending; badge count = 1
+22. Invitations → POST /invitations/:id/accept (Bob) → status = accepted
+
+23. Devices → GET /devices (Bob)     → Alice's device visible; is_owner=false;
+                                       registration_code = null
+24. Alerts → GET /alerts/sos (Bob)   → Alice's alerts visible with owner_name
+25. SOS Data → POST /gateway/data ✅ → WS delivers to BOTH Alice AND Bob
+
+26. Invitations → POST /invitations/:id/revoke (Alice) → status = revoked
+27. Devices → GET /devices (Bob)     → device gone from Bob's list
+
+28. Invitations → POST /devices/:id/invitations (resend) → resets to pending
+29. Invitations → POST /invitations/:id/decline (Bob)   → status = declined
+30. Invitations → DELETE /invitations/:id (Alice)       → row deleted
+
+── Negative cases ────────────────────────────────────────────────────────────
+Auth        → POST /login wrong password              → 401
+Devices     → GET /devices no token                  → 401
+Devices     → DELETE /devices/9999                   → 404 (not owner)
+Gateway     → POST /gateway/data no token            → 401
+Gateway     → POST /gateway/register bad code        → 401
+Invitations → POST /invitations/:id/accept (Alice)   → 404 (not invitee)
+Invitations → POST /devices/:id/invitations (dup)    → 409 (already active)
+Notifications → PUT /notifications/9999 { enabled:true } → 403 (no access)
+Auth        → GET /api/auth/google (no GOOGLE_CLIENT_ID) → 503
 ```
 
 ---
@@ -767,10 +970,24 @@ sqlite3 /app/data/gateway_data.db
 # Useful queries
 .tables
 SELECT id, email, role, display_name FROM users;
-SELECT id, name, owner_id, status FROM gateways;   -- status computed in app, not stored
+SELECT id, name, owner_id FROM gateways;
 SELECT se.id, se.timestamp, g.name AS device, se.button_pressed
   FROM sos_events se JOIN gateways g ON g.id = se.device_db_id
   ORDER BY se.synced_at DESC LIMIT 20;
+
+-- Invitations
+SELECT di.id, g.name AS device, u1.email AS owner, u2.email AS invitee, di.status
+  FROM device_invitations di
+  JOIN gateways g ON g.id = di.device_id
+  JOIN users u1 ON u1.id = di.inviter_id
+  JOIN users u2 ON u2.id = di.invitee_id;
+
+-- Notification prefs
+SELECT u.email, g.name AS device, np.enabled
+  FROM notification_prefs np
+  JOIN users u ON u.id = np.user_id
+  JOIN gateways g ON g.id = np.device_id;
+
 .quit
 ```
 

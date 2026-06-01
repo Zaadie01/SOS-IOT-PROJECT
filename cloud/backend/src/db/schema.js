@@ -64,6 +64,30 @@ function initSchema(db) {
         `);
     }
 
+    // ── Device invitations ────────────────────────────────────────────────────
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS device_invitations (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            device_id    INTEGER NOT NULL,
+            inviter_id   INTEGER NOT NULL,
+            invitee_id   INTEGER NOT NULL,
+            status       TEXT NOT NULL DEFAULT 'pending',
+            created_at   INTEGER,
+            responded_at INTEGER,
+            UNIQUE(device_id, invitee_id)
+        )
+    `);
+
+    // ── Notification preferences ───────────────────────────────────────────────
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS notification_prefs (
+            user_id   INTEGER NOT NULL,
+            device_id INTEGER NOT NULL,
+            enabled   INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (user_id, device_id)
+        )
+    `);
+
     // ── SOS events (v2 — uses device_db_id integer FK) ─────────────────────────
     const sosCols = db.prepare('PRAGMA table_info(sos_events)').all();
 
