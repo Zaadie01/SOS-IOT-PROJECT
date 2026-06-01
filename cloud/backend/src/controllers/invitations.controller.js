@@ -64,28 +64,6 @@ function listDeviceInvitations(req, res) {
     res.json({ invitations: rows });
 }
 
-function revokeInvitation(req, res) {
-    const invId   = Number(req.params.id);
-    const ownerId = req.user.id;
-
-    const inv = db.prepare(`
-        SELECT di.id, di.status, di.device_id, di.invitee_id
-        FROM   device_invitations di
-        JOIN   gateways g ON g.id = di.device_id
-        WHERE  di.id = ? AND g.owner_id = ?
-    `).get(invId, ownerId);
-
-    if (!inv) return res.status(404).json({ error: 'Invitation not found' });
-    if (inv.status !== 'pending' && inv.status !== 'accepted') {
-        return res.status(409).json({ error: 'Cannot revoke invitation in this state' });
-    }
-
-    db.prepare('UPDATE device_invitations SET status=? WHERE id=?').run('revoked', invId);
-    db.prepare('DELETE FROM notification_prefs WHERE user_id=? AND device_id=?').run(inv.invitee_id, inv.device_id);
-
-    res.json({ ok: true });
-}
-
 function deleteInvitation(req, res) {
     const invId   = Number(req.params.id);
     const ownerId = req.user.id;
@@ -156,12 +134,33 @@ function declineInvitation(req, res) {
     res.json({ ok: true });
 }
 
+// ── Invitee self-removal ──────────────────────────────────────────────────────
+
+function removeOwnAccess(req, res) {
+    const deviceId  = Number(req.params.id);
+    const inviteeId = req.user.id;
+
+    const inv = db.prepare(`
+        SELECT id, device_id FROM device_invitations
+        WHERE device_id=? AND invitee_id=? AND status='accepted'
+    `).get(deviceId, inviteeId);
+
+    if (!inv) return res.status(404).json({ error: 'No accepted access found for this device' });
+
+    db.prepare('UPDATE device_invitations SET status=?, responded_at=? WHERE id=?')
+      .run('declined', Date.now(), inv.id);
+    db.prepare('DELETE FROM notification_prefs WHERE user_id=? AND device_id=?')
+      .run(inviteeId, deviceId);
+
+    res.json({ ok: true });
+}
+
 module.exports = {
     createInvitation,
     listDeviceInvitations,
-    revokeInvitation,
     deleteInvitation,
     getReceivedInvitations,
     acceptInvitation,
     declineInvitation,
+    removeOwnAccess,
 };

@@ -5,11 +5,11 @@ import {
     mdiPlus, mdiPencilOutline, mdiTrashCanOutline,
     mdiDevices, mdiAlertOutline, mdiAlertCircleOutline,
     mdiMagnify, mdiSort, mdiRefresh,
-    mdiAccountPlus, mdiCancel, mdiTrashCan,
+    mdiAccountPlus, mdiTrashCan, mdiEyeOffOutline,
 } from '@mdi/js';
 import {
     fetchDevices, createDevice, renameDevice, deleteDevice,
-    listDeviceInvitations, createInvitation, revokeInvitation, deleteInvitation,
+    listDeviceInvitations, createInvitation, deleteInvitation, removeOwnAccess,
 } from '../api';
 import StatusBadge from '../components/common/StatusBadge';
 import DeviceModal from '../components/devices/DeviceModal';
@@ -63,13 +63,6 @@ function ShareModal({ device, onClose }) {
         } finally {
             setInviting(false);
         }
-    }
-
-    async function handleRevoke(id) {
-        setBusy(id);
-        try { await revokeInvitation(id); await loadList(); }
-        catch (_) {}
-        finally { setBusy(null); }
     }
 
     async function handleDelete(id) {
@@ -144,16 +137,6 @@ function ShareModal({ device, onClose }) {
                                                 <span className={`badge ${INV_STATUS_CLASS[inv.status] || 'bg-secondary'}`}>
                                                     {inv.status}
                                                 </span>
-                                                {(inv.status === 'pending' || inv.status === 'accepted') && (
-                                                    <button
-                                                        className="btn btn-outline-warning btn-sm py-0 px-1 d-flex align-items-center"
-                                                        title="Revoke"
-                                                        disabled={busy === inv.id}
-                                                        onClick={() => handleRevoke(inv.id)}
-                                                    >
-                                                        <Icon path={mdiCancel} size={0.6} />
-                                                    </button>
-                                                )}
                                                 <button
                                                     className="btn btn-outline-danger btn-sm py-0 px-1 d-flex align-items-center"
                                                     title="Delete"
@@ -447,6 +430,22 @@ export default function DevicesPage() {
                                         >
                                             <Icon path={mdiTrashCanOutline} size={0.65} />
                                             Delete
+                                        </button>
+                                    )}
+
+                                    {!device.is_owner && (
+                                        <button
+                                            className="btn btn-outline-danger btn-sm d-flex align-items-center gap-1 ms-auto"
+                                            onClick={async () => {
+                                                if (!window.confirm(`Stop watching "${device.name}"? You will lose access and need a new invitation.`)) return;
+                                                try {
+                                                    await removeOwnAccess(device.id);
+                                                    loadDevices();
+                                                } catch (_) {}
+                                            }}
+                                        >
+                                            <Icon path={mdiEyeOffOutline} size={0.65} />
+                                            Stop watching
                                         </button>
                                     )}
                                 </div>

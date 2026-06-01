@@ -107,10 +107,6 @@ export async function listDeviceInvitations(deviceId) {
     return json.invitations;
 }
 
-export function revokeInvitation(invitationId) {
-    return apiFetch(`/invitations/${invitationId}/revoke`, { method: 'POST' });
-}
-
 export function deleteInvitation(invitationId) {
     return apiFetch(`/invitations/${invitationId}`, { method: 'DELETE' });
 }
@@ -128,6 +124,10 @@ export function acceptInvitation(invitationId) {
 
 export function declineInvitation(invitationId) {
     return apiFetch(`/invitations/${invitationId}/decline`, { method: 'POST' });
+}
+
+export function removeOwnAccess(deviceId) {
+    return apiFetch(`/devices/${deviceId}/access`, { method: 'DELETE' });
 }
 
 // ── Notification prefs ────────────────────────────────────────────────────────

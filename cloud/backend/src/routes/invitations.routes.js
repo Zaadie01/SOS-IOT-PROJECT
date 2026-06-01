@@ -9,12 +9,14 @@ router.post  ('/devices/:id/invitations', invCtrl.createInvitation);
 router.get   ('/devices/:id/invitations', invCtrl.listDeviceInvitations);
 
 // Owner — invitation-scoped
-router.post  ('/invitations/:id/revoke',  invCtrl.revokeInvitation);
 router.delete('/invitations/:id',         invCtrl.deleteInvitation);
 
-// Invitee
+// Invitee — inbox
 router.get   ('/invitations/received',    invCtrl.getReceivedInvitations);
 router.post  ('/invitations/:id/accept',  invCtrl.acceptInvitation);
 router.post  ('/invitations/:id/decline', invCtrl.declineInvitation);
+
+// Invitee — self-removal
+router.delete('/devices/:id/access',      invCtrl.removeOwnAccess);
 
 module.exports = router;
