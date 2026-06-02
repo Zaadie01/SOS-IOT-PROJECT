@@ -6,7 +6,7 @@ const CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
  */
 function deleteExpiredUnactivatedDevices(db) {
     const { changes } = db.prepare(`
-        DELETE FROM gateways
+        DELETE FROM devices
         WHERE registration_code   IS NOT NULL
           AND reg_code_expires_at  < ?
           AND token                IS NULL
@@ -19,7 +19,7 @@ function deleteExpiredUnactivatedDevices(db) {
 
 /**
  * Runs one immediate cleanup, then schedules it to repeat every hour.
- * Must be called AFTER initSchema() so the gateways table exists.
+ * Must be called AFTER initSchema() so the devices table exists.
  */
 function startCleanupJob(db) {
     deleteExpiredUnactivatedDevices(db);

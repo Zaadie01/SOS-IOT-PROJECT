@@ -321,7 +321,7 @@ collection:
       created: 1780300000000
       modified: 1780300000000
       sortKey: -350
-      description: "Share device access with other users. Owner manages, invitee accepts/declines. Statuses: pending → accepted | declined; pending|accepted → revoked (owner). Resend resets declined|revoked to pending."
+      description: "Share device access with other users. Owner invites and deletes rows; invitee accepts/declines/stops-watching. Statuses: pending → accepted | declined. Resend resets declined to pending."
     children:
 
       - url: "{{ base_url }}/api/devices/{{ device_db_id }}/invitations"
@@ -331,7 +331,7 @@ collection:
           created: 1780300000000
           modified: 1780300000000
           isPrivate: false
-          description: "Owner invites Bob by user_id. Returns 201 {id, status:'pending'}. Copy id → invitation_id. 409 if already pending|accepted; resends if declined|revoked."
+          description: "Owner invites Bob by user_id. Returns 201 {id, status:'pending'}. Copy id → invitation_id. 409 if already pending|accepted; resends if declined."
           sortKey: -360
         method: POST
         body:
@@ -488,26 +488,6 @@ collection:
           cookies: { send: true, store: true }
           rebuildPath: true
 
-      - url: "{{ base_url }}/api/invitations/{{ invitation_id }}/revoke"
-        name: POST /invitations/:id/revoke — revoke (owner)
-        meta:
-          id: req_inv_revoke
-          created: 1780300000000
-          modified: 1780300000000
-          isPrivate: false
-          description: "Alice revokes pending|accepted invitation. Use jwt_token. Device disappears from Bob's list immediately."
-          sortKey: -353
-        method: POST
-        headers:
-          - name: Authorization
-            value: "Bearer {{ jwt_token }}"
-        settings:
-          renderRequestBody: true
-          encodeUrl: true
-          followRedirects: global
-          cookies: { send: true, store: true }
-          rebuildPath: true
-
       - url: "{{ base_url }}/api/invitations/{{ invitation_id }}"
         name: DELETE /invitations/:id — delete row (owner)
         meta:
@@ -521,6 +501,26 @@ collection:
         headers:
           - name: Authorization
             value: "Bearer {{ jwt_token }}"
+        settings:
+          renderRequestBody: true
+          encodeUrl: true
+          followRedirects: global
+          cookies: { send: true, store: true }
+          rebuildPath: true
+
+      - url: "{{ base_url }}/api/devices/{{ device_db_id }}/access"
+        name: DELETE /devices/:id/access — stop watching (invitee)
+        meta:
+          id: req_inv_stop_watching
+          created: 1780400000000
+          modified: 1780400000000
+          isPrivate: false
+          description: "Bob stops watching Alice's device. Use jwt_token_b. Status becomes declined; notification_prefs cleaned up. Owner sees declined in Manage Access."
+          sortKey: -351
+        method: DELETE
+        headers:
+          - name: Authorization
+            value: "Bearer {{ jwt_token_b }}"
         settings:
           renderRequestBody: true
           encodeUrl: true

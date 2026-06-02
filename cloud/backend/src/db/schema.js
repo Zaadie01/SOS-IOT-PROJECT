@@ -22,12 +22,24 @@ function initSchema(db) {
     try { db.exec(`ALTER TABLE users ADD COLUMN google_id TEXT`);    } catch (_) {}
     try { db.exec(`UPDATE users SET role = 'user' WHERE role = 'viewer'`); } catch (_) {}
 
-    // ── Gateways (v3 — no gateway_id / device_id columns) ─────────────────────
-    const gatewayCols = db.prepare('PRAGMA table_info(gateways)').all().map(c => c.name);
+    // ── Migration: gateways → devices (safe rename, all data preserved) ────────
+    const gatewaysExists = db.prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='gateways'"
+    ).get();
+    const devicesExists = db.prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='devices'"
+    ).get();
+    if (gatewaysExists && !devicesExists) {
+        console.log('[db] Migrating gateways → devices (table rename)…');
+        db.exec('ALTER TABLE gateways RENAME TO devices');
+    }
 
-    if (gatewayCols.length === 0) {
+    // ── Devices (v3 — no gateway_id / device_id columns) ──────────────────────
+    const deviceCols = db.prepare('PRAGMA table_info(devices)').all().map(c => c.name);
+
+    if (deviceCols.length === 0) {
         db.exec(`
-            CREATE TABLE gateways (
+            CREATE TABLE devices (
                 id                  INTEGER PRIMARY KEY AUTOINCREMENT,
                 name                TEXT,
                 owner_id            INTEGER,
@@ -39,10 +51,10 @@ function initSchema(db) {
                 warning             TEXT
             )
         `);
-    } else if (gatewayCols.includes('gateway_id')) {
-        console.log('[db] Migrating gateways → v3 (dropping gateway_id / device_id)…');
+    } else if (deviceCols.includes('gateway_id')) {
+        console.log('[db] Migrating devices → v3 (dropping gateway_id / device_id)…');
         db.exec(`
-            CREATE TABLE gateways_v3 (
+            CREATE TABLE devices_v3 (
                 id                  INTEGER PRIMARY KEY AUTOINCREMENT,
                 name                TEXT,
                 owner_id            INTEGER,
@@ -53,14 +65,14 @@ function initSchema(db) {
                 last_seen_at        INTEGER,
                 warning             TEXT
             );
-            INSERT INTO gateways_v3
+            INSERT INTO devices_v3
                 (id, name, owner_id, token, registration_code,
                  reg_code_expires_at, registered_at, last_seen_at, warning)
                 SELECT id, name, owner_id, token, registration_code,
                        reg_code_expires_at, registered_at, last_seen_at, warning
-                FROM gateways;
-            DROP TABLE gateways;
-            ALTER TABLE gateways_v3 RENAME TO gateways;
+                FROM devices;
+            DROP TABLE devices;
+            ALTER TABLE devices_v3 RENAME TO devices;
         `);
     }
 

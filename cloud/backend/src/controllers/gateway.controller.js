@@ -6,7 +6,7 @@ function registerGateway(req, res) {
     const { registration_code } = req.body;
 
     const slot = db.prepare(`
-        SELECT * FROM gateways
+        SELECT * FROM devices
         WHERE registration_code = ? AND reg_code_expires_at > ?
     `).get(registration_code, Date.now());
 
@@ -15,7 +15,7 @@ function registerGateway(req, res) {
     const token = crypto.randomBytes(32).toString('hex');
 
     db.prepare(`
-        UPDATE gateways
+        UPDATE devices
         SET    token = ?, registered_at = ?,
                registration_code = NULL, reg_code_expires_at = NULL
         WHERE  id = ?
@@ -30,7 +30,7 @@ function handleSosData(req, res) {
     const now       = Date.now();
     const eventTime = req.body.timestamp || now;
 
-    db.prepare('UPDATE gateways SET last_seen_at = ? WHERE id = ?').run(now, gateway.id);
+    db.prepare('UPDATE devices SET last_seen_at = ? WHERE id = ?').run(now, gateway.id);
 
     if (!req.body.sos_alert) return res.json({ success: true });
 
@@ -69,7 +69,7 @@ function handleSosData(req, res) {
 
 function handleHeartbeat(req, res) {
     const gateway = req.gateway;
-    db.prepare('UPDATE gateways SET last_seen_at = ? WHERE id = ?').run(Date.now(), gateway.id);
+    db.prepare('UPDATE devices SET last_seen_at = ? WHERE id = ?').run(Date.now(), gateway.id);
     res.json({ ok: true, server_time: Date.now() });
 }
 
@@ -77,7 +77,7 @@ function handleWarning(req, res) {
     const gateway = req.gateway;
     const warning = req.body.message ? String(req.body.message).trim() : null;
 
-    db.prepare('UPDATE gateways SET last_seen_at = ?, warning = ? WHERE id = ?')
+    db.prepare('UPDATE devices SET last_seen_at = ?, warning = ? WHERE id = ?')
       .run(Date.now(), warning, gateway.id);
 
     res.json({ ok: true });

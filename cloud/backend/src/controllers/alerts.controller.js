@@ -18,7 +18,7 @@ function listAlerts(req, res) {
                    g.name AS device_name,
                    COALESCE(u.display_name, u.email) AS owner_name
             FROM   sos_events se
-            JOIN   gateways g ON g.id = se.device_db_id
+            JOIN   devices g ON g.id = se.device_db_id
             JOIN   users    u ON u.id = g.owner_id
             WHERE  ${ACCESS_SUBQUERY} AND g.id = :did
             ORDER  BY se.synced_at DESC
@@ -28,7 +28,7 @@ function listAlerts(req, res) {
                    g.name AS device_name,
                    COALESCE(u.display_name, u.email) AS owner_name
             FROM   sos_events se
-            JOIN   gateways g ON g.id = se.device_db_id
+            JOIN   devices g ON g.id = se.device_db_id
             JOIN   users    u ON u.id = g.owner_id
             WHERE  ${ACCESS_SUBQUERY}
             ORDER  BY se.synced_at DESC

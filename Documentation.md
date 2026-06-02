@@ -395,7 +395,7 @@ src/
 | `google_id` | TEXT | Linked Google account ID |
 | `created_at` | INTEGER | Unix ms |
 
-**Table `gateways`** — user-owned IoT devices:
+**Table `devices`** — user-owned IoT devices (was `gateways` in older installs; auto-renamed on startup):
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -416,7 +416,7 @@ src/
 | `id` | INTEGER | Auto-increment PK |
 | `timestamp` | INTEGER | Event time (from firmware, falls back to server time) |
 | `button_pressed` | INTEGER | Click count |
-| `device_db_id` | INTEGER | FK → gateways.id |
+| `device_db_id` | INTEGER | FK → devices.id |
 | `synced_at` | INTEGER | Server receive time (used for sorting) |
 
 **Table `device_invitations`** — shared device access:
@@ -424,10 +424,10 @@ src/
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | INTEGER | Auto-increment PK |
-| `device_id` | INTEGER | FK → gateways.id |
+| `device_id` | INTEGER | FK → devices.id |
 | `inviter_id` | INTEGER | FK → users.id (owner who sent the invite) |
 | `invitee_id` | INTEGER | FK → users.id (user being invited) |
-| `status` | TEXT | `pending` \| `accepted` \| `declined` \| `revoked` |
+| `status` | TEXT | `pending` \| `accepted` \| `declined` |
 | `created_at` | INTEGER | Unix ms — when invitation was created / last resent |
 | `responded_at` | INTEGER | Unix ms — when invitee accepted or declined |
 
@@ -436,16 +436,16 @@ Unique constraint: `(device_id, invitee_id)`.
 Status transitions:
 - Owner creates → `pending`
 - Invitee: `pending` → `accepted` or `declined`
-- Owner: `pending` or `accepted` → `revoked`
+- Invitee: `accepted` → `declined` via `DELETE /api/devices/:id/access` (self-removal)
 - Owner: delete row (any status)
-- Owner resends after `declined` or `revoked` → resets to `pending`
+- Owner resends after `declined` → resets to `pending`
 
 **Table `notification_prefs`** — per-device push notification opt-in:
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `user_id` | INTEGER | FK → users.id |
-| `device_id` | INTEGER | FK → gateways.id |
+| `device_id` | INTEGER | FK → devices.id |
 | `enabled` | INTEGER | `1` = enabled, `0` = disabled |
 
 Primary key: `(user_id, device_id)`. Only users with access (owner or accepted invitee) can set a pref.
@@ -479,10 +479,9 @@ Primary key: `(user_id, device_id)`. Only users with access (owner or accepted i
 
 | Method | URL | Description |
 |--------|-----|-------------|
-| `POST` | `/api/devices/:id/invitations` | Invite a user by `user_id` or `email`. Returns 201 `{id, status:"pending"}`. 409 if already `pending`\|`accepted`; resends if `declined`\|`revoked`. |
+| `POST` | `/api/devices/:id/invitations` | Invite a user by `user_id` or `email`. Returns 201 `{id, status:"pending"}`. 409 if already `pending`\|`accepted`; resends if `declined`. |
 | `GET` | `/api/devices/:id/invitations` | List all invitations for a device: `id`, `invitee_id`, `invitee_name`, `invitee_email`, `status`, `created_at`. |
-| `POST` | `/api/invitations/:id/revoke` | Revoke a `pending` or `accepted` invitation. Removes the invitee's notification prefs. |
-| `DELETE` | `/api/invitations/:id` | Permanently delete an invitation row (any status). |
+| `DELETE` | `/api/invitations/:id` | Permanently delete an invitation row (any status). Removes invitee's notification prefs. |
 
 **Invitee side:**
 
@@ -491,6 +490,7 @@ Primary key: `(user_id, device_id)`. Only users with access (owner or accepted i
 | `GET` | `/api/invitations/received` | My incoming invitations: `id`, `device_id`, `device_name`, `owner_name`, `status`, `created_at`. |
 | `POST` | `/api/invitations/:id/accept` | Accept a `pending` invitation. |
 | `POST` | `/api/invitations/:id/decline` | Decline a `pending` invitation. |
+| `DELETE` | `/api/devices/:id/access` | Stop watching — invitee removes own `accepted` access. Sets status to `declined`, removes notification prefs. |
 
 #### Notifications (all require JWT)
 
@@ -585,27 +585,28 @@ src/
 │   └── time.js                   — formatTime helper (HH:MM:SS, DD/MM/YYYY)
 ├── components/
 │   ├── auth/ProtectedRoute.jsx
-│   ├── layout/Navbar.jsx         — User dropdown: ID #N, Invitations badge,
-│   │                               InvitationsModal (accept / decline inbox)
+│   ├── layout/Navbar.jsx         — User dropdown: ID #N, Invitations badge
+│   ├── invitations/
+│   │   └── InvitationsModal.jsx  — Accept / Decline inbox modal
 │   ├── common/
 │   │   ├── GoogleLogo.jsx
 │   │   └── StatusBadge.jsx
 │   ├── devices/
 │   │   ├── DeviceModal.jsx       — Add / Rename / Delete / Show code modals
+│   │   ├── DeviceCard.jsx        — Single device card (owner/guest variants)
+│   │   ├── ShareModal.jsx        — Manage Access: invite form + invitations list
 │   │   └── CodeBanner.jsx
 │   └── alerts/
 │       ├── DeviceFilter.jsx
-│       └── LastSosIndicator.jsx
+│       ├── LastSosIndicator.jsx
+│       └── NotificationsPanel.jsx — Push prefs: master toggle + per-device checklist
 └── pages/
     ├── LandingPage.jsx
     ├── LoginPage.jsx
     ├── RegisterPage.jsx
-    ├── DevicesPage.jsx            — Device grid with owner badge, Share button,
-    │                                ShareModal (invite form + invitations list),
-    │                                Rename/Delete/Show code hidden for non-owners
+    ├── DevicesPage.jsx            — Device grid, search/sort/filter, auto-refresh
     └── AlertsPage.jsx             — SOS history table + Owner column,
-                                     Notifications panel (master toggle + per-device
-                                     checklist), push fired from AlertsContext
+                                     Notifications panel toggle, push from AlertsContext
 ```
 
 ### Context Architecture
@@ -746,15 +747,15 @@ All containers use `restart: unless-stopped`:
 |------|-----|
 | First registration | One-time 8-char code issued by the dashboard (24 h TTL) |
 | Ongoing auth | Per-device 64-hex token in `x-gateway-token` header |
-| Token lookup | `requireGateway` middleware: `SELECT * FROM gateways WHERE token = ?` |
-| Token storage (cloud) | `gateways.token` in SQLite |
+| Token lookup | `requireGateway` middleware: `SELECT * FROM devices WHERE token = ?` |
+| Token storage (cloud) | `devices.token` in SQLite |
 | Token storage (gateway) | `gateway_meta` table in local SQLite |
 
 ### Ownership & Access Control
 
 - Each device belongs to one owner (`owner_id`)
-- **Owner** can: Rename, Delete, Show registration code, Share (invite), Revoke/Delete invitations
-- **Accepted invitee** can: View device and its alerts, enable/disable push notifications
+- **Owner** can: Rename, Delete, Show registration code, Share (invite), Delete invitations
+- **Accepted invitee** can: View device and its alerts, enable/disable push notifications, stop watching (self-remove)
 - **Non-invited user** sees nothing — not in `GET /api/devices`, not in alerts, no WS delivery
 - `GET /api/devices` returns own devices + accepted-invitation devices; `registration_code` is `null` for non-owners
 - `GET /api/alerts/sos` returns alerts from own + accepted-invitation devices
@@ -770,7 +771,8 @@ All containers use `restart: unless-stopped`:
 | `GET /api/auth/me` | JWT required |
 | `GET /api/devices` and children | JWT required |
 | `GET /api/alerts/sos` | JWT required |
-| `GET|POST /api/invitations/*` | JWT required; ownership/invitee checked per action |
+| `GET|POST|DELETE /api/invitations/*` | JWT required; ownership/invitee checked per action |
+| `DELETE /api/devices/:id/access` | JWT required; invitee only (own accepted access) |
 | `GET|PUT /api/notifications/*` | JWT required; access verified before write |
 | `POST /api/gateway/register` | Valid registration code required |
 | `POST /api/gateway/data` | Per-device token required |
@@ -936,23 +938,25 @@ Import `cloud/insomnia.yaml` into Insomnia. Set `base_url = https://app-project.
 24. Alerts → GET /alerts/sos (Bob)   → Alice's alerts visible with owner_name
 25. SOS Data → POST /gateway/data ✅ → WS delivers to BOTH Alice AND Bob
 
-26. Invitations → POST /invitations/:id/revoke (Alice) → status = revoked
-27. Devices → GET /devices (Bob)     → device gone from Bob's list
+26. Invitations → DELETE /devices/:id/access (Bob)  → status = declined;
+                                     Bob's device gone from his list
+27. Invitations → GET /devices/:id/invitations (Alice) → row shows declined
 
 28. Invitations → POST /devices/:id/invitations (resend) → resets to pending
-29. Invitations → POST /invitations/:id/decline (Bob)   → status = declined
-30. Invitations → DELETE /invitations/:id (Alice)       → row deleted
+29. Invitations → POST /invitations/:id/accept (Bob) → accepted again
+30. Invitations → DELETE /invitations/:id (Alice)    → row deleted; Bob loses access
 
 ── Negative cases ────────────────────────────────────────────────────────────
-Auth        → POST /login wrong password              → 401
-Devices     → GET /devices no token                  → 401
-Devices     → DELETE /devices/9999                   → 404 (not owner)
-Gateway     → POST /gateway/data no token            → 401
-Gateway     → POST /gateway/register bad code        → 401
-Invitations → POST /invitations/:id/accept (Alice)   → 404 (not invitee)
-Invitations → POST /devices/:id/invitations (dup)    → 409 (already active)
+Auth          → POST /login wrong password              → 401
+Devices       → GET /devices no token                  → 401
+Devices       → DELETE /devices/9999                   → 404 (not owner)
+Gateway       → POST /gateway/data no token            → 401
+Gateway       → POST /gateway/register bad code        → 401
+Invitations   → POST /invitations/:id/accept (Alice)   → 404 (not invitee)
+Invitations   → POST /devices/:id/invitations (dup)    → 409 (already active)
+Invitations   → DELETE /devices/:id/access (no access) → 404
 Notifications → PUT /notifications/9999 { enabled:true } → 403 (no access)
-Auth        → GET /api/auth/google (no GOOGLE_CLIENT_ID) → 503
+Auth          → GET /api/auth/google (no GOOGLE_CLIENT_ID) → 503
 ```
 
 ---
@@ -970,15 +974,15 @@ sqlite3 /app/data/gateway_data.db
 # Useful queries
 .tables
 SELECT id, email, role, display_name FROM users;
-SELECT id, name, owner_id FROM gateways;
+SELECT id, name, owner_id FROM devices;
 SELECT se.id, se.timestamp, g.name AS device, se.button_pressed
-  FROM sos_events se JOIN gateways g ON g.id = se.device_db_id
+  FROM sos_events se JOIN devices g ON g.id = se.device_db_id
   ORDER BY se.synced_at DESC LIMIT 20;
 
 -- Invitations
 SELECT di.id, g.name AS device, u1.email AS owner, u2.email AS invitee, di.status
   FROM device_invitations di
-  JOIN gateways g ON g.id = di.device_id
+  JOIN devices g ON g.id = di.device_id
   JOIN users u1 ON u1.id = di.inviter_id
   JOIN users u2 ON u2.id = di.invitee_id;
 
@@ -986,7 +990,7 @@ SELECT di.id, g.name AS device, u1.email AS owner, u2.email AS invitee, di.statu
 SELECT u.email, g.name AS device, np.enabled
   FROM notification_prefs np
   JOIN users u ON u.id = np.user_id
-  JOIN gateways g ON g.id = np.device_id;
+  JOIN devices g ON g.id = np.device_id;
 
 .quit
 ```

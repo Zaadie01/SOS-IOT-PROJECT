@@ -11,7 +11,7 @@ function requireGateway(req, res, next) {
         return res.status(401).json({ error: 'Missing x-gateway-token header' });
     }
 
-    const gateway = db.prepare('SELECT * FROM gateways WHERE token = ?').get(token);
+    const gateway = db.prepare('SELECT * FROM devices WHERE token = ?').get(token);
 
     if (!gateway) {
         return res.status(401).json({ error: 'Unauthorized' });

@@ -15,7 +15,7 @@ function setNotificationPref(req, res) {
 
     // Must be owner OR accepted invitee
     const access = db.prepare(`
-        SELECT 1 FROM gateways WHERE id=? AND owner_id=?
+        SELECT 1 FROM devices WHERE id=? AND owner_id=?
         UNION ALL
         SELECT 1 FROM device_invitations WHERE device_id=? AND invitee_id=? AND status='accepted'
         LIMIT 1

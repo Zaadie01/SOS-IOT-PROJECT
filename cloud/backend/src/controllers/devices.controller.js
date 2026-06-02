@@ -40,7 +40,7 @@ function listDevices(req, res) {
                COALESCE(u.display_name, u.email) AS owner_name,
                COUNT(se.id) AS sos_count,
                CASE WHEN g.owner_id = ? THEN 1 ELSE 0 END AS is_owner
-        FROM   gateways g
+        FROM   devices g
         LEFT JOIN sos_events se ON se.device_db_id = g.id
         LEFT JOIN users u ON u.id = g.owner_id
         WHERE  g.owner_id = ?
@@ -76,7 +76,7 @@ function createDevice(req, res) {
     const expiresAt = Date.now() + 24 * 60 * 60 * 1000; // 24 h
 
     const { lastInsertRowid } = db.prepare(`
-        INSERT INTO gateways (owner_id, name, registration_code, reg_code_expires_at, registered_at)
+        INSERT INTO devices (owner_id, name, registration_code, reg_code_expires_at, registered_at)
         VALUES (?, ?, ?, ?, ?)
     `).run(req.user.id, name, code, expiresAt, Date.now());
 
@@ -90,17 +90,17 @@ function createDevice(req, res) {
 
 function renameDevice(req, res) {
     const name   = req.body.name.trim();
-    const device = db.prepare('SELECT id FROM gateways WHERE id = ? AND owner_id = ?')
+    const device = db.prepare('SELECT id FROM devices WHERE id = ? AND owner_id = ?')
                      .get(req.params.id, req.user.id);
 
     if (!device) return res.status(404).json({ error: 'Device not found' });
 
-    db.prepare('UPDATE gateways SET name = ? WHERE id = ?').run(name, device.id);
+    db.prepare('UPDATE devices SET name = ? WHERE id = ?').run(name, device.id);
     res.json({ ok: true, name });
 }
 
 function deleteDevice(req, res) {
-    const device = db.prepare('SELECT id FROM gateways WHERE id = ? AND owner_id = ?')
+    const device = db.prepare('SELECT id FROM devices WHERE id = ? AND owner_id = ?')
                      .get(req.params.id, req.user.id);
 
     if (!device) return res.status(404).json({ error: 'Device not found' });
@@ -108,7 +108,7 @@ function deleteDevice(req, res) {
     db.prepare('DELETE FROM sos_events          WHERE device_db_id = ?').run(device.id);
     db.prepare('DELETE FROM device_invitations  WHERE device_id    = ?').run(device.id);
     db.prepare('DELETE FROM notification_prefs  WHERE device_id    = ?').run(device.id);
-    db.prepare('DELETE FROM gateways            WHERE id           = ?').run(device.id);
+    db.prepare('DELETE FROM devices             WHERE id           = ?').run(device.id);
     res.json({ ok: true });
 }
 

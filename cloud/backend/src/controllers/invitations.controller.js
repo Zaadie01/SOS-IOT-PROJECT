@@ -6,7 +6,7 @@ function createInvitation(req, res) {
     const deviceId = Number(req.params.id);
     const ownerId  = req.user.id;
 
-    const device = db.prepare('SELECT id FROM gateways WHERE id = ? AND owner_id = ?').get(deviceId, ownerId);
+    const device = db.prepare('SELECT id FROM devices WHERE id = ? AND owner_id = ?').get(deviceId, ownerId);
     if (!device) return res.status(404).json({ error: 'Device not found' });
 
     let invitee;
@@ -48,7 +48,7 @@ function listDeviceInvitations(req, res) {
     const deviceId = Number(req.params.id);
     const ownerId  = req.user.id;
 
-    const device = db.prepare('SELECT id FROM gateways WHERE id = ? AND owner_id = ?').get(deviceId, ownerId);
+    const device = db.prepare('SELECT id FROM devices WHERE id = ? AND owner_id = ?').get(deviceId, ownerId);
     if (!device) return res.status(404).json({ error: 'Device not found' });
 
     const rows = db.prepare(`
@@ -71,7 +71,7 @@ function deleteInvitation(req, res) {
     const inv = db.prepare(`
         SELECT di.id, di.invitee_id, di.device_id
         FROM   device_invitations di
-        JOIN   gateways g ON g.id = di.device_id
+        JOIN   devices g ON g.id = di.device_id
         WHERE  di.id = ? AND g.owner_id = ?
     `).get(invId, ownerId);
 
@@ -93,7 +93,7 @@ function getReceivedInvitations(req, res) {
                g.name AS device_name,
                COALESCE(u.display_name, u.email) AS owner_name
         FROM   device_invitations di
-        JOIN   gateways g ON g.id = di.device_id
+        JOIN   devices g ON g.id = di.device_id
         JOIN   users    u ON u.id = di.inviter_id
         WHERE  di.invitee_id = ?
         ORDER  BY di.created_at DESC
