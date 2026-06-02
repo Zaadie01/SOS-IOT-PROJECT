@@ -180,6 +180,7 @@ Browser opens app-project.org
   → React app loads; AlertsProvider mounts (inside AuthProvider)
   → Fetches GET /api/alerts/sos — records baseline alert ID
   → Loads GET /api/notifications — loads per-device push prefs
+  → Reads localStorage['sos_notifications_enabled'] — master push toggle (default on)
   → Opens WebSocket: wss://app-project.org/ws?token=<JWT>
        → Caddy proxies /ws to backend:3001 (HTTP upgrade)
        → Server verifies JWT from query string, stores userId on socket
@@ -187,8 +188,8 @@ Browser opens app-project.org
 
 From this point:
   → SOS events pushed only to owner + accepted invitees (not broadcast to all)
-  → Push notification fired if: permission granted + device pref enabled
-    + alert ID > baseline (prevents false push on first load)
+  → Push notification fired if: permission granted + master toggle on
+    + device pref enabled + alert ID > baseline (prevents false push on first load)
   → WebSocket survives route changes (AlertsProvider lives at app root)
   → DevicesPage auto-refreshes every 15 s (status, last ping, SOS count)
   → Disconnect: reconnects automatically every 3 s
@@ -578,7 +579,8 @@ src/
 ├── context/
 │   ├── AuthContext.js            — JWT token + user state in localStorage
 │   └── AlertsContext.js          — Global WS connection, alerts state,
-│                                   notification prefs, push dispatch
+│                                   notification prefs, master toggle
+│                                   (localStorage-persisted), push dispatch
 ├── hooks/
 │   └── useAlerts.js              — Legacy standalone hook (not used by AlertsPage)
 ├── utils/
@@ -625,6 +627,7 @@ src/
 - **One WebSocket** per session — no duplicate connections when navigating between pages
 - **Push notifications fire globally** — independent of which page is open and whether the Notifications panel is visible
 - **Baseline protection** — the newest historic alert ID is recorded at load time; only events with a higher ID trigger a push, preventing false notifications on first load
+- **Master toggle** — `notificationsEnabled` in localStorage; survives page reload; gates all pushes before per-device prefs are checked
 
 ### Routes
 
@@ -649,12 +652,18 @@ src/
 
 3. SOS arrives via WebSocket in AlertsContext:
    a. Alert prepended to state (AlertsPage updates instantly)
-   b. event.id > baselineId?          → yes, continue
+   b. event.id > baselineId?                  → yes, continue
    c. Notification.permission === 'granted'?  → yes, continue
-   d. prefs[event.device_db_id] === true?     → yes, fire push
+   d. notificationsEnabled === true?          → yes, continue (master toggle)
+   e. prefs[event.device_db_id] === true?     → yes, fire push
    → new Notification("SOS: Office Button", { body: "14:32:01 01/06/2026" })
 
-4. Push fires regardless of current route (Devices, Alerts, or any other)
+4. Master toggle and per-device prefs are independent:
+   turning off master hides the checklist but prefs are kept in DB.
+   Re-enabling master instantly restores all previous per-device settings.
+   Master state persists in localStorage across page reloads.
+
+5. Push fires regardless of current route (Devices, Alerts, or any other)
    Push fires even if the Notifications panel is collapsed
 ```
 

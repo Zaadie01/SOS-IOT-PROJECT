@@ -144,10 +144,41 @@ function NameFormModal({ mode, device, onSave, onClose }) {
     );
 }
 
+// ── Mode: confirm stop watching ───────────────────────────────────────────────
+
+function StopWatchingConfirmModal({ device, onStopWatching, onClose }) {
+    const [loading, setLoading] = useState(false);
+    const [error, setError]     = useState('');
+
+    async function handleConfirm() {
+        setLoading(true);
+        try { await onStopWatching(); }
+        catch (err) { setError(err.message); setLoading(false); }
+    }
+
+    return (
+        <ModalShell title="Stop watching" onClose={onClose}>
+            <div className="modal-body">
+                {error && <div className="alert alert-danger py-2 small">{error}</div>}
+                <p className="mb-0">
+                    Stop watching <strong>{device.name}</strong>? You will stop receiving its alerts.
+                </p>
+            </div>
+            <div className="modal-footer border-0 pt-0">
+                <button className="btn btn-light btn-sm" onClick={onClose}>Cancel</button>
+                <button className="btn btn-danger btn-sm" onClick={handleConfirm} disabled={loading}>
+                    {loading ? 'Stopping…' : 'Stop watching'}
+                </button>
+            </div>
+        </ModalShell>
+    );
+}
+
 // ── Public component — picks the right modal variant by mode ──────────────────
 
-export default function DeviceModal({ mode, device, onSave, onDelete, onClose }) {
-    if (mode === 'code')   return <RegistrationCodeModal device={device} onClose={onClose} />;
-    if (mode === 'delete') return <DeleteConfirmModal device={device} onDelete={onDelete} onClose={onClose} />;
+export default function DeviceModal({ mode, device, onSave, onDelete, onStopWatching, onClose }) {
+    if (mode === 'code')          return <RegistrationCodeModal device={device} onClose={onClose} />;
+    if (mode === 'delete')        return <DeleteConfirmModal device={device} onDelete={onDelete} onClose={onClose} />;
+    if (mode === 'stopWatching')  return <StopWatchingConfirmModal device={device} onStopWatching={onStopWatching} onClose={onClose} />;
     return <NameFormModal mode={mode} device={device} onSave={onSave} onClose={onClose} />;
 }

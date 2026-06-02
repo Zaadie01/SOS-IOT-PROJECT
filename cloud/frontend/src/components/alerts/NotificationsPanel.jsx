@@ -1,26 +1,17 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import Icon from '@mdi/react';
 import { mdiBell, mdiBellOutline } from '@mdi/js';
-import { formatTime } from '../../utils/time';
+import { useAlertsContext } from '../../context/AlertsContext';
 
 export default function NotificationsPanel({ devices, prefs, updatePref }) {
+    const { notificationsEnabled, setNotificationsEnabled } = useAlertsContext();
     const [permission, setPermission] = useState(() => Notification.permission);
-    const [masterOn, setMasterOn]     = useState(() =>
-        Notification.permission === 'granted' && Object.values(prefs).some(Boolean)
-    );
-    const [search, setSearch] = useState('');
-
-    // Sync masterOn if prefs arrive after mount
-    useEffect(() => {
-        if (permission === 'granted' && Object.values(prefs).some(Boolean)) {
-            setMasterOn(true);
-        }
-    }, [prefs, permission]);
+    const [search, setSearch]         = useState('');
 
     async function requestPermission() {
         const result = await Notification.requestPermission();
         setPermission(result);
-        if (result === 'granted') setMasterOn(true);
+        if (result === 'granted') setNotificationsEnabled(true);
     }
 
     const registeredDevices = devices.filter(d => d.status !== 'pending');
@@ -59,14 +50,14 @@ export default function NotificationsPanel({ devices, prefs, updatePref }) {
                                 className="form-check-input"
                                 type="checkbox"
                                 id="master-notif"
-                                checked={masterOn}
-                                onChange={e => setMasterOn(e.target.checked)}
+                                checked={notificationsEnabled}
+                                onChange={e => setNotificationsEnabled(e.target.checked)}
                             />
                             <label className="form-check-label small fw-medium" htmlFor="master-notif">
                                 Notifications enabled
                             </label>
                         </div>
-                        {masterOn && registeredDevices.length > 0 && (
+                        {notificationsEnabled && registeredDevices.length > 0 && (
                             <div className="ps-2">
                                 <input
                                     type="text"

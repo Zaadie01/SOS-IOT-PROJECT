@@ -5,11 +5,24 @@ import { formatTime } from '../utils/time';
 
 const AlertsContext = createContext(null);
 
+const NOTIF_ENABLED_KEY = 'sos_notifications_enabled';
+
 export function AlertsProvider({ children }) {
     const { token } = useAuth();
 
     const [alerts, setAlerts] = useState([]);
     const [prefs, setPrefs]   = useState({});  // { [device_id]: bool }
+
+    // Master notifications toggle — persisted in localStorage, default true
+    const [notificationsEnabled, setNotificationsEnabledState] = useState(() => {
+        const stored = localStorage.getItem(NOTIF_ENABLED_KEY);
+        return stored === null ? true : stored === 'true';
+    });
+
+    function setNotificationsEnabled(val) {
+        localStorage.setItem(NOTIF_ENABLED_KEY, String(val));
+        setNotificationsEnabledState(val);
+    }
 
     // Baseline: id of the newest alert already present at load time.
     // null  = initial load not yet complete (any WS event is genuinely new → push).
@@ -17,9 +30,12 @@ export function AlertsProvider({ children }) {
     // n > 0 = only WS events with id > n trigger a push.
     const baselineIdRef = useRef(null);
 
-    // Ref that stays in sync with prefs so the WS closure always reads current values.
+    // Refs that stay in sync with state so WS closure always reads current values.
     const prefsRef = useRef({});
     useEffect(() => { prefsRef.current = prefs; }, [prefs]);
+
+    const notificationsEnabledRef = useRef(notificationsEnabled);
+    useEffect(() => { notificationsEnabledRef.current = notificationsEnabled; }, [notificationsEnabled]);
 
     // ── Initial data load ────────────────────────────────────────────────────────
     useEffect(() => {
@@ -74,7 +90,10 @@ export function AlertsProvider({ children }) {
                     // Push gate 2: browser permission
                     if (Notification.permission !== 'granted') return;
 
-                    // Push gate 3: user opted in for this device
+                    // Push gate 3: master toggle
+                    if (!notificationsEnabledRef.current) return;
+
+                    // Push gate 4: user opted in for this device
                     if (!prefsRef.current[event.device_db_id]) return;
 
                     new Notification(`SOS: ${event.device_name || 'Unknown device'}`, {
@@ -110,7 +129,7 @@ export function AlertsProvider({ children }) {
     }
 
     return (
-        <AlertsContext.Provider value={{ alerts, prefs, refresh, updatePref }}>
+        <AlertsContext.Provider value={{ alerts, prefs, refresh, updatePref, notificationsEnabled, setNotificationsEnabled }}>
             {children}
         </AlertsContext.Provider>
     );

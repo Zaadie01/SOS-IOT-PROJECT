@@ -91,6 +91,12 @@ export default function DevicesPage() {
         loadDevices();
     }
 
+    async function handleStopWatching() {
+        await removeOwnAccess(activeModal.device.id);
+        setModal(null);
+        loadDevices();
+    }
+
     return (
         <div className="container py-4">
 
@@ -195,10 +201,7 @@ export default function DevicesPage() {
                                 onShowCode={() => setModal({ mode: 'code', device })}
                                 onDelete={() => setModal({ mode: 'delete', device })}
                                 onViewAlerts={() => navigate(`/alerts?device=${device.id}`)}
-                                onStopWatching={async () => {
-                                    if (!window.confirm(`Stop watching "${device.name}"? You will lose access and need a new invitation.`)) return;
-                                    try { await removeOwnAccess(device.id); loadDevices(); } catch (_) {}
-                                }}
+                                onStopWatching={() => setModal({ mode: 'stopWatching', device })}
                             />
                         </div>
                     ))}
@@ -211,6 +214,7 @@ export default function DevicesPage() {
                     device={activeModal.device}
                     onSave={activeModal.mode === 'add' ? handleAdd : handleRename}
                     onDelete={handleDelete}
+                    onStopWatching={handleStopWatching}
                     onClose={() => setModal(null)}
                 />
             )}
